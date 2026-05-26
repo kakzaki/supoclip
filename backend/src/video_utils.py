@@ -22,6 +22,7 @@ import assemblyai as aai
 import httpx
 import srt
 import whisper
+from groq import Groq
 from types import SimpleNamespace
 from datetime import timedelta
 
@@ -180,12 +181,14 @@ def _submit_and_wait_for_assemblyai_transcript(
 
 
 def get_video_transcript(video_path: Path, speech_model: str = "best") -> str:
-    """Get transcript using configured provider (AssemblyAI or local Whisper)."""
+    """Get transcript using configured provider (AssemblyAI, Groq, or local Whisper)."""
     runtime_config = get_config()
     provider = runtime_config.transcription_provider
 
     if provider == "whisper":
         return get_video_transcript_with_whisper(video_path)
+    if provider == "groq":
+        return get_video_transcript_with_groq(video_path)
 
     logger.info(f"Getting transcript for: {video_path}")
 
@@ -297,6 +300,85 @@ def get_video_transcript_with_whisper(video_path: Path) -> str:
 
     except Exception as e:
         logger.error(f"Error in Whisper transcription: {e}")
+        raise
+
+
+def get_video_transcript_with_groq(video_path: Path) -> str:
+    """Get transcript using Groq API (Whisper)."""
+    logger.info(f"Starting Groq Whisper transcription for: {video_path}")
+    runtime_config = get_config()
+
+    if not runtime_config.groq_api_key:
+        raise ValueError("GROQ_API_KEY is not configured")
+
+    client = Groq(api_key=runtime_config.groq_api_key)
+
+    try:
+        # Prepare audio for transcription (Groq has a 25MB limit)
+        audio_path = _prepare_audio_for_transcription(video_path)
+
+        with open(audio_path, "rb") as file:
+            # Groq's translations/transcriptions API
+            # Note: Groq currently doesn't support word-level timestamps in the same way as Whisper local,
+            # but we can get segment-level timestamps.
+            transcription = client.audio.transcriptions.create(
+                file=(audio_path.name, file.read()),
+                model="whisper-large-v3",
+                response_format="verbose_json",
+            )
+
+        # Convert Groq output to compatible format
+        words = []
+        for segment in getattr(transcription, "segments", []):
+            # Groq verbose_json provides segments with start/end
+            # We'll split the segment text into approximate word timings if words aren't provided
+            seg_text = segment["text"].strip()
+            seg_start_ms = int(segment["start"] * 1000)
+            seg_end_ms = int(segment["end"] * 1000)
+
+            # Check if Groq provided word-level data (some versions/models might)
+            if "words" in segment:
+                for word_info in segment["words"]:
+                    words.append(
+                        SimpleNamespace(
+                            text=word_info["word"].strip(),
+                            start=int(word_info["start"] * 1000),
+                            end=int(word_info["end"] * 1000),
+                            confidence=word_info.get("probability", 1.0),
+                        )
+                    )
+            else:
+                # Fallback: estimate word timings from segment
+                seg_words = seg_text.split()
+                if seg_words:
+                    word_duration = (seg_end_ms - seg_start_ms) // len(seg_words)
+                    for i, word in enumerate(seg_words):
+                        words.append(
+                            SimpleNamespace(
+                                text=word,
+                                start=seg_start_ms + (i * word_duration),
+                                end=seg_start_ms + ((i + 1) * word_duration),
+                                confidence=1.0,
+                            )
+                        )
+
+        transcript = SimpleNamespace(
+            text=getattr(transcription, "text", ""),
+            words=words,
+            utterances=[],
+        )
+
+        formatted_lines = format_transcript_for_analysis(transcript)
+        cache_transcript_data(video_path, transcript)
+
+        output = "\n".join(formatted_lines)
+        logger.info(
+            f"Groq transcript generated: {len(formatted_lines)} segments, {len(output)} chars"
+        )
+        return output
+
+    except Exception as e:
+        logger.error(f"Error in Groq transcription: {e}")
         raise
 
 
