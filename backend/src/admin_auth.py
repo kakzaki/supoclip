@@ -11,6 +11,10 @@ from .config import Config
 async def require_admin_user(
     request: Request, db: AsyncSession, config: Config
 ) -> str:
+    # Bypass for local/self-hosted development
+    if config.self_host or config.allow_unsigned_backend_auth:
+        return "local-admin"
+
     user_id = get_authenticated_user_id(request, config)
 
     result = await db.execute(

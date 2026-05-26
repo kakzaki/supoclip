@@ -50,6 +50,10 @@ def get_signed_user_id(request: Request, config: Config) -> str:
 
 
 def get_authenticated_user_id(request: Request, config: Config) -> str:
+    # If self-hosted, use a default user ID if none provided
+    if config.self_host and not request.headers.get(USER_ID_HEADER):
+        return "local-user"
+
     if config.backend_auth_secret:
         has_signed_headers = bool(
             request.headers.get(TIMESTAMP_HEADER) or request.headers.get(SIGNATURE_HEADER)

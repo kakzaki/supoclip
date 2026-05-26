@@ -21,6 +21,8 @@ import cv2
 import assemblyai as aai
 import httpx
 import srt
+import whisper
+from types import SimpleNamespace
 from datetime import timedelta
 
 from .config import get_config
@@ -178,11 +180,16 @@ def _submit_and_wait_for_assemblyai_transcript(
 
 
 def get_video_transcript(video_path: Path, speech_model: str = "best") -> str:
-    """Get transcript using AssemblyAI with word-level timing for precise subtitles."""
+    """Get transcript using configured provider (AssemblyAI or local Whisper)."""
+    runtime_config = get_config()
+    provider = runtime_config.transcription_provider
+
+    if provider == "whisper":
+        return get_video_transcript_with_whisper(video_path)
+
     logger.info(f"Getting transcript for: {video_path}")
 
     # Configure AssemblyAI
-    runtime_config = get_config()
     aai.settings.api_key = runtime_config.assembly_ai_api_key
     aai.settings.http_timeout = runtime_config.assembly_ai_http_timeout_seconds
     transcriber = aai.Transcriber()
@@ -240,6 +247,56 @@ def get_video_transcript(video_path: Path, speech_model: str = "best") -> str:
 
     except Exception as e:
         logger.error(f"Error in transcription: {e}")
+        raise
+
+
+def get_video_transcript_with_whisper(video_path: Path) -> str:
+    """Get transcript using local OpenAI Whisper model."""
+    logger.info(f"Starting local Whisper transcription for: {video_path}")
+    runtime_config = get_config()
+    model_size = runtime_config.whisper_model
+
+    try:
+        # Load model (this may take time and memory)
+        model = whisper.load_model(model_size)
+
+        # Run transcription with word timestamps
+        result = model.transcribe(str(video_path), word_timestamps=True)
+
+        # Convert Whisper output to a format compatible with our AssemblyAI-based cache
+        # We'll use SimpleNamespace to mimic the AssemblyAI transcript object
+        words = []
+        for segment in result.get("segments", []):
+            for word_info in segment.get("words", []):
+                words.append(
+                    SimpleNamespace(
+                        text=word_info["word"].strip(),
+                        start=int(word_info["start"] * 1000),
+                        end=int(word_info["end"] * 1000),
+                        confidence=word_info.get("probability", 1.0),
+                    )
+                )
+
+        # Create a mock transcript object
+        transcript = SimpleNamespace(
+            text=result.get("text", ""),
+            words=words,
+            utterances=[],  # Whisper doesn't do diarization natively
+        )
+
+        formatted_lines = format_transcript_for_analysis(transcript)
+
+        # Cache the raw transcript for subtitle generation
+        cache_transcript_data(video_path, transcript)
+
+        output = "\n".join(formatted_lines)
+        logger.info(
+            f"Whisper transcript generated: {len(formatted_lines)} segments, {len(output)} chars"
+        )
+        return output
+
+    except Exception as e:
+        logger.error(f"Error in Whisper transcription: {e}")
         raise
 
 

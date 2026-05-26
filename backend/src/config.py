@@ -20,6 +20,9 @@ class Config:
         self.ollama_api_key = self._get_runtime_setting("OLLAMA_API_KEY")
 
         self.whisper_model = os.getenv("WHISPER_MODEL", "base")
+        self.transcription_provider = os.getenv(
+            "TRANSCRIPTION_PROVIDER", "assemblyai"
+        ).lower()
         self.llm = self._get_runtime_setting("LLM") or self._infer_default_llm()
         self.assembly_ai_api_key = self._get_runtime_setting("ASSEMBLY_AI_API_KEY")
         self.assembly_ai_http_timeout_seconds = int(
@@ -175,15 +178,17 @@ class Config:
     def _infer_default_llm(self) -> str:
         """
         Infer a usable default model based on whichever API key is present.
-        Falls back to Google for backward compatibility.
+        Falls back to local Ollama (gemma) if no keys are found.
         """
+        # If user explicitly set LLM in env, that's already handled in __init__
+        # This method is only called if self._get_runtime_setting("LLM") is None
         if self.google_api_key:
-            return "google-gla:gemini-3-flash-preview"
+            return "google-gla:gemini-1.5-flash"
         if self.openai_api_key:
-            return "openai:gpt-5.2"
+            return "openai:gpt-4o-mini"
         if self.anthropic_api_key:
-            return "anthropic:claude-4-sonnet"
-        return "google-gla:gemini-3-flash-preview"
+            return "anthropic:claude-3-5-sonnet"
+        return "ollama:gemma"
 
 
 def get_config() -> Config:
