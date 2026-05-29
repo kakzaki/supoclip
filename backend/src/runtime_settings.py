@@ -15,8 +15,9 @@ logger = logging.getLogger(__name__)
 RUNTIME_SETTING_KEYS: tuple[str, ...] = (
     "TRANSCRIPTION_PROVIDER",
     "ASSEMBLY_AI_API_KEY",
-    "GROQ_API_KEY",
     "LLM",
+    "WHISPER_MODEL",
+    "GROQ_API_KEY",
     "OPENAI_API_KEY",
     "GOOGLE_API_KEY",
     "ANTHROPIC_API_KEY",
@@ -34,6 +35,9 @@ PROCESS_ENV_SETTING_KEYS = frozenset(
         "ANTHROPIC_API_KEY",
         "OLLAMA_BASE_URL",
         "OLLAMA_API_KEY",
+        "LLM",
+        "TRANSCRIPTION_PROVIDER",
+        "GROQ_API_KEY",
     }
 )
 

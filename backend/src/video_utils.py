@@ -196,10 +196,23 @@ def get_video_transcript(video_path: Path, speech_model: str = "best") -> str:
                 if "text" in cached_data and cached_data["text"]:
                     logger.info("Using existing transcript from disk cache")
                     # We still need to format it for analysis
-                    # We can use load_transcript_cache to reconstruct a SimpleNamespace
-                    transcript = load_transcript_cache(video_path)
-                    if transcript:
-                        formatted_lines = format_transcript_for_analysis(transcript)
+                    cached_data = load_cached_transcript_data(video_path)
+                    if cached_data:
+                        # Reconstruct a mock object for format_transcript_for_analysis
+                        words = [
+                            SimpleNamespace(**w) for w in cached_data.get("words", [])
+                        ]
+                        utterances = []
+                        for u in cached_data.get("utterances", []):
+                            u_words = [SimpleNamespace(**w) for w in u.get("words", [])]
+                            utterances.append(SimpleNamespace(**{**u, "words": u_words}))
+                        
+                        mock_transcript = SimpleNamespace(
+                            text=cached_data.get("text", ""),
+                            words=words,
+                            utterances=utterances
+                        )
+                        formatted_lines = format_transcript_for_analysis(mock_transcript)
                         return "\n".join(formatted_lines)
         except Exception as e:
             logger.warning(f"Failed to use existing transcript cache: {e}")

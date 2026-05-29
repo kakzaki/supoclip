@@ -20,9 +20,10 @@ class Config:
         self.ollama_api_key = self._get_runtime_setting("OLLAMA_API_KEY")
         self.groq_api_key = self._get_runtime_setting("GROQ_API_KEY")
 
-        self.whisper_model = os.getenv("WHISPER_MODEL", "base")
-        self.transcription_provider = os.getenv(
-            "TRANSCRIPTION_PROVIDER", "assemblyai"
+        self.whisper_model = self._get_runtime_setting("WHISPER_MODEL") or os.getenv("WHISPER_MODEL", "base")
+        self.transcription_provider = (
+            self._get_runtime_setting("TRANSCRIPTION_PROVIDER")
+            or os.getenv("TRANSCRIPTION_PROVIDER", "assemblyai")
         ).lower()
         self.llm = self._get_runtime_setting("LLM") or self._infer_default_llm()
         self.assembly_ai_api_key = self._get_runtime_setting("ASSEMBLY_AI_API_KEY")
