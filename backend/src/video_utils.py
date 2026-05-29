@@ -185,6 +185,25 @@ def get_video_transcript(video_path: Path, speech_model: str = "best") -> str:
     runtime_config = get_config()
     provider = runtime_config.transcription_provider
 
+    # Check for existing disk cache (Resume support)
+    cache_path = video_path.with_suffix(".transcript_cache.json")
+    if cache_path.exists():
+        logger.info(f"Found existing transcript cache: {cache_path}")
+        try:
+            with open(cache_path, "r", encoding="utf-8") as f:
+                cached_data = json.load(f)
+                # Check if it has a 'text' field or is old format
+                if "text" in cached_data and cached_data["text"]:
+                    logger.info("Using existing transcript from disk cache")
+                    # We still need to format it for analysis
+                    # We can use load_transcript_cache to reconstruct a SimpleNamespace
+                    transcript = load_transcript_cache(video_path)
+                    if transcript:
+                        formatted_lines = format_transcript_for_analysis(transcript)
+                        return "\n".join(formatted_lines)
+        except Exception as e:
+            logger.warning(f"Failed to use existing transcript cache: {e}")
+
     if provider == "whisper":
         return get_video_transcript_with_whisper(video_path)
     if provider == "groq":
@@ -315,8 +334,10 @@ def get_video_transcript_with_groq(video_path: Path) -> str:
 
     try:
         # Prepare audio for transcription (Groq has a 25MB limit)
+        logger.info("Extracting audio for Groq...")
         audio_path = _prepare_audio_for_transcription(video_path)
 
+        logger.info(f"Sending audio to Groq (size: {audio_path.stat().st_size / (1024*1024):.2f}MB)...")
         with open(audio_path, "rb") as file:
             # Groq's translations/transcriptions API
             # Note: Groq currently doesn't support word-level timestamps in the same way as Whisper local,
@@ -327,6 +348,7 @@ def get_video_transcript_with_groq(video_path: Path) -> str:
                 response_format="verbose_json",
             )
 
+        logger.info("Groq transcription received, processing segments...")
         # Convert Groq output to compatible format
         words = []
         for segment in getattr(transcription, "segments", []):

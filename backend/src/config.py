@@ -180,7 +180,7 @@ class Config:
     def _infer_default_llm(self) -> str:
         """
         Infer a usable default model based on whichever API key is present.
-        Falls back to local Ollama (gemma) if no keys are found.
+        Falls back to local Ollama (gemma4:e4b) if no keys are found.
         """
         # If user explicitly set LLM in env, that's already handled in __init__
         # This method is only called if self._get_runtime_setting("LLM") is None
@@ -190,7 +190,7 @@ class Config:
             return "openai:gpt-4o-mini"
         if self.anthropic_api_key:
             return "anthropic:claude-3-5-sonnet"
-        return "ollama:gemma"
+        return "ollama:gemma4:e4b"
 
 
 def get_config() -> Config:

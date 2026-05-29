@@ -336,7 +336,10 @@ class VideoService:
             if source_type == "youtube":
                 video_info = await async_get_youtube_video_info(url, task_id=task_id)
                 if video_info:
+                    title = video_info.get("title", "video")
                     duration = video_info.get("duration", 0)
+                    if progress_callback:
+                        await progress_callback(15, f"Found video: {title} ({duration // 60}m {duration % 60}s)", "processing")
                     if duration and duration > runtime_config.max_video_duration:
                         mins = runtime_config.max_video_duration // 60
                         raise Exception(
@@ -347,10 +350,14 @@ class VideoService:
                 video_path = await VideoService.download_video(url, task_id=task_id)
                 if not video_path:
                     raise Exception("Failed to download video")
+                if progress_callback:
+                    await progress_callback(25, "Download complete.", "processing")
             else:
                 video_path = VideoService.resolve_local_video_path(url)
                 if not video_path.exists():
                     raise Exception("Video file not found")
+                if progress_callback:
+                    await progress_callback(25, "Using uploaded video.", "processing")
 
             # Post-download duration guard (catches cases where preflight info was unavailable)
             file_duration = VideoService._get_file_duration(video_path)
@@ -366,13 +373,15 @@ class VideoService:
                 raise Exception("Task cancelled")
 
             if progress_callback:
-                await progress_callback(30, "Generating transcript...", "processing")
+                await progress_callback(30, "Preparing audio for transcription...", "processing")
 
             transcript = cached_transcript
             if not transcript:
                 transcript = await VideoService.generate_transcript(
                     video_path, processing_mode=processing_mode
                 )
+                if progress_callback:
+                    await progress_callback(45, "Transcription complete.", "processing")
 
             # Step 3: AI analysis
             if should_cancel and await should_cancel():
@@ -380,11 +389,13 @@ class VideoService:
 
             if progress_callback:
                 await progress_callback(
-                    50, "Analyzing content with AI...", "processing"
+                    50, "Analyzing content with AI (ranking virality)...", "processing"
                 )
 
             relevant_parts = None
             if cached_analysis_json:
+                if progress_callback:
+                    await progress_callback(55, "Using cached AI analysis.", "processing")
                 try:
                     cached_analysis = json.loads(cached_analysis_json)
                     segments = cached_analysis.get("most_relevant_segments", [])
@@ -414,6 +425,8 @@ class VideoService:
 
             if relevant_parts is None:
                 try:
+                    if progress_callback:
+                        await progress_callback(55, "Extracting viral signals from audio...", "processing")
                     clip_signals = await run_in_thread(
                         build_clip_signal_summary,
                         video_path,
@@ -422,6 +435,10 @@ class VideoService:
                 except Exception as exc:
                     logger.warning("Clip signal extraction failed: %s", exc)
                     clip_signals = None
+                
+                if progress_callback:
+                    await progress_callback(60, f"AI is selecting viral segments using {runtime_config.llm}...", "processing")
+                
                 relevant_parts = await VideoService.analyze_transcript(
                     transcript,
                     clip_signals=clip_signals,
@@ -432,7 +449,8 @@ class VideoService:
                 raise Exception("Task cancelled")
 
             if progress_callback:
-                await progress_callback(70, "Creating video clips...", "processing")
+                num_segments = len(relevant_parts.most_relevant_segments)
+                await progress_callback(70, f"Creating {num_segments} video clips...", "processing")
 
             raw_segments = relevant_parts.most_relevant_segments
             segments_json: List[Dict[str, Any]] = []

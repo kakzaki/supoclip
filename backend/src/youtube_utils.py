@@ -580,6 +580,25 @@ def download_youtube_video(
         return None
 
     downloader = YouTubeDownloader()
+
+    # Check if we already have a suitable download in temp_dir
+    existing_files = [
+        file_path
+        for file_path in downloader.temp_dir.glob(f"{video_id}.*")
+        if file_path.is_file()
+        and file_path.suffix.lower() in [".mp4", ".mkv", ".webm", ".mov", ".m4v"]
+    ]
+    if existing_files:
+        # Sort by size to pick the "best" one if multiple exist
+        existing_files.sort(key=lambda p: p.stat().st_size, reverse=True)
+        best_existing = existing_files[0]
+        # Quick check: if it's too small (e.g. < 1MB), it's probably a failed partial download
+        if best_existing.stat().st_size > 1024 * 1024:
+            logger.info("Using existing download for %s: %s", video_id, best_existing.name)
+            return best_existing
+        else:
+            logger.info("Existing file for %s is too small, redownloading...", video_id)
+
     _remove_cached_downloads(downloader.temp_dir, video_id)
 
     config = get_config()
