@@ -19,6 +19,7 @@ class Config:
         self.ollama_base_url = self._get_runtime_setting("OLLAMA_BASE_URL")
         self.ollama_api_key = self._get_runtime_setting("OLLAMA_API_KEY")
         self.groq_api_key = self._get_runtime_setting("GROQ_API_KEY")
+        self.deepseek_api_key = self._get_runtime_setting("DEEPSEEK_API_KEY")
 
         self.whisper_model = self._get_runtime_setting("WHISPER_MODEL") or os.getenv("WHISPER_MODEL", "base")
         self.transcription_provider = (
@@ -122,6 +123,7 @@ class Config:
             "OLLAMA_BASE_URL": self.ollama_base_url,
             "OLLAMA_API_KEY": self.ollama_api_key,
             "GROQ_API_KEY": self.groq_api_key,
+            "DEEPSEEK_API_KEY": self.deepseek_api_key,
             "YOUTUBE_DATA_API_KEY": self.youtube_data_api_key,
             "APIFY_API_TOKEN": self.apify_api_token,
             "PEXELS_API_KEY": self.pexels_api_key,
@@ -194,6 +196,8 @@ class Config:
             return "anthropic:claude-3-5-sonnet"
         if self.groq_api_key:
             return "groq:llama-3.3-70b-versatile"
+        if self.deepseek_api_key:
+            return "deepseek:deepseek-chat"
         return "ollama:gemma4:e4b"
 
 

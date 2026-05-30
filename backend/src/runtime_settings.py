@@ -38,6 +38,7 @@ PROCESS_ENV_SETTING_KEYS = frozenset(
         "LLM",
         "TRANSCRIPTION_PROVIDER",
         "GROQ_API_KEY",
+        "DEEPSEEK_API_KEY",
     }
 )
 

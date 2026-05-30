@@ -36,11 +36,11 @@ source .env
 
 if [ -n "${LLM:-}" ]; then
     case "$LLM" in
-        google:*|google-gla:*|openai:*|anthropic:*|ollama:*)
+        google:*|google-gla:*|openai:*|anthropic:*|ollama:*|groq:*|deepseek:*)
             ;;
         *)
             echo -e "${YELLOW}Warning: Unsupported LLM value '$LLM'${NC}"
-            echo "Use google-gla:*, openai:*, anthropic:*, ollama:*, or groq:*"
+            echo "Use google-gla:*, openai:*, anthropic:*, ollama:*, groq:*, or deepseek:*"
             echo ""
             ;;
     esac

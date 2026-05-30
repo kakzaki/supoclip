@@ -295,7 +295,7 @@ Find 2-5 compelling segments that would work well as standalone clips. Quality o
 _transcript_agent: Optional[Agent[None, TranscriptAnalysis]] = None
 _transcript_agent_signature: Optional[tuple[str | None, ...]] = None
 
-SUPPORTED_LLM_PROVIDERS = {"google", "google-gla", "openai", "anthropic", "ollama", "groq"}
+SUPPORTED_LLM_PROVIDERS = {"google", "google-gla", "openai", "anthropic", "ollama", "groq", "deepseek"}
 
 
 def _split_llm_name(model_name: str) -> tuple[str, str | None]:
@@ -313,7 +313,7 @@ def _get_missing_llm_key_error(model_name: str, runtime_config: Config) -> Optio
     if provider not in SUPPORTED_LLM_PROVIDERS:
         return (
             f"Unsupported LLM provider '{provider}'. "
-            "Use google-gla:*, openai:*, anthropic:*, ollama:*, or groq:*."
+            "Use google-gla:*, openai:*, anthropic:*, ollama:*, groq:*, or deepseek:*."
         )
 
     if not provider_model_name:
@@ -344,6 +344,12 @@ def _get_missing_llm_key_error(model_name: str, runtime_config: Config) -> Optio
         return (
             "Selected LLM provider is Groq, but GROQ_API_KEY is not set. "
             "Set GROQ_API_KEY or choose another provider with a matching API key."
+        )
+
+    if provider == "deepseek" and not runtime_config.deepseek_api_key:
+        return (
+            "Selected LLM provider is DeepSeek, but DEEPSEEK_API_KEY is not set. "
+            "Set DEEPSEEK_API_KEY or choose another provider with a matching API key."
         )
 
     if provider == "ollama":
@@ -385,6 +391,7 @@ def get_transcript_agent() -> Agent[None, TranscriptAnalysis]:
         runtime_config.google_api_key,
         runtime_config.anthropic_api_key,
         runtime_config.groq_api_key,
+        runtime_config.deepseek_api_key,
         runtime_config.ollama_base_url,
         runtime_config.ollama_api_key,
     )
@@ -616,6 +623,48 @@ def _repair_segment_bounds(
     return repaired_start, repaired_end
 
 
+# Approx 32k chars ≈ 8k tokens, safe for Groq's free tier (12k TPM).
+# Leave headroom for the system prompt, JSON output, and instruction text.
+_MAX_TRANSCRIPT_CHARS_FOR_LOW_TPM = 30_000
+
+
+def _should_limit_transcript_tokens() -> bool:
+    """Check whether the current LLM provider has a known low TPM limit."""
+    runtime_config = get_config()
+    provider, _ = _split_llm_name(runtime_config.llm)
+    return provider == "groq"
+
+
+def _truncate_transcript(transcript: str) -> str:
+    """Truncate long transcripts to stay within low TPM provider limits."""
+    if not _should_limit_transcript_tokens():
+        return transcript
+
+    if len(transcript) <= _MAX_TRANSCRIPT_CHARS_FOR_LOW_TPM:
+        return transcript
+
+    # Keep lines that fit within the limit; prefer contiguous lines from the top.
+    lines = transcript.splitlines()
+    truncated_lines: list[str] = []
+    total = 0
+    for line in lines:
+        if total + len(line) > _MAX_TRANSCRIPT_CHARS_FOR_LOW_TPM:
+            break
+        truncated_lines.append(line)
+        total += len(line) + 1  # +1 for newline
+
+    if not truncated_lines:
+        # Edge case: first line alone exceeds the limit; take a raw slice.
+        return transcript[:_MAX_TRANSCRIPT_CHARS_FOR_LOW_TPM]
+
+    logger.warning(
+        "Transcript truncated from %d to %d chars to fit provider TPM limits.",
+        len(transcript),
+        total,
+    )
+    return "\n".join(truncated_lines)
+
+
 async def get_most_relevant_parts_by_transcript(
     transcript: str, include_broll: bool = False, clip_signals: str | None = None
 ) -> TranscriptAnalysis:
@@ -626,10 +675,11 @@ async def get_most_relevant_parts_by_transcript(
 
     try:
         agent = get_transcript_agent()
+        truncated = _truncate_transcript(transcript)
 
         result = await agent.run(
             build_transcript_analysis_prompt(
-                transcript=transcript,
+                transcript=truncated,
                 include_broll=include_broll,
                 clip_signals=clip_signals,
             )
