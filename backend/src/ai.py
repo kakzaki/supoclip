@@ -295,7 +295,7 @@ Find 2-5 compelling segments that would work well as standalone clips. Quality o
 _transcript_agent: Optional[Agent[None, TranscriptAnalysis]] = None
 _transcript_agent_signature: Optional[tuple[str | None, ...]] = None
 
-SUPPORTED_LLM_PROVIDERS = {"google", "google-gla", "openai", "anthropic", "ollama"}
+SUPPORTED_LLM_PROVIDERS = {"google", "google-gla", "openai", "anthropic", "ollama", "groq"}
 
 
 def _split_llm_name(model_name: str) -> tuple[str, str | None]:
@@ -313,7 +313,7 @@ def _get_missing_llm_key_error(model_name: str, runtime_config: Config) -> Optio
     if provider not in SUPPORTED_LLM_PROVIDERS:
         return (
             f"Unsupported LLM provider '{provider}'. "
-            "Use google-gla:*, openai:*, anthropic:*, or ollama:*."
+            "Use google-gla:*, openai:*, anthropic:*, ollama:*, or groq:*."
         )
 
     if not provider_model_name:
@@ -325,7 +325,7 @@ def _get_missing_llm_key_error(model_name: str, runtime_config: Config) -> Optio
     if provider in {"google", "google-gla"} and not runtime_config.google_api_key:
         return (
             "Selected LLM provider is Google, but GOOGLE_API_KEY is not set. "
-            "Set GOOGLE_API_KEY or set LLM to openai:* / anthropic:* / ollama:* with the matching API key."
+            "Set GOOGLE_API_KEY or set LLM to openai:* / anthropic:* / ollama:* / groq:* with the matching API key."
         )
 
     if provider == "openai" and not runtime_config.openai_api_key:
@@ -338,6 +338,12 @@ def _get_missing_llm_key_error(model_name: str, runtime_config: Config) -> Optio
         return (
             "Selected LLM provider is Anthropic, but ANTHROPIC_API_KEY is not set. "
             "Set ANTHROPIC_API_KEY or choose another provider with a matching API key."
+        )
+
+    if provider == "groq" and not runtime_config.groq_api_key:
+        return (
+            "Selected LLM provider is Groq, but GROQ_API_KEY is not set. "
+            "Set GROQ_API_KEY or choose another provider with a matching API key."
         )
 
     if provider == "ollama":
@@ -378,6 +384,7 @@ def get_transcript_agent() -> Agent[None, TranscriptAnalysis]:
         runtime_config.openai_api_key,
         runtime_config.google_api_key,
         runtime_config.anthropic_api_key,
+        runtime_config.groq_api_key,
         runtime_config.ollama_base_url,
         runtime_config.ollama_api_key,
     )

@@ -77,11 +77,12 @@ class Config:
             [
                 "http://localhost:3107",
                 "http://sp.localhost:3107",
+                "http://hanclipper.localhost:3107",
             ],
         )
         self.resend_api_key = self._get_optional_env("RESEND_API_KEY")
         self.resend_from_email = os.getenv(
-            "RESEND_FROM_EMAIL", "SupoClip <onboarding@resend.dev>"
+            "RESEND_FROM_EMAIL", "HanClipper <onboarding@resend.dev>"
         )
         self.app_base_url = (
             self._get_optional_env("NEXT_PUBLIC_APP_URL") or "http://localhost:3107"
@@ -191,6 +192,8 @@ class Config:
             return "openai:gpt-4o-mini"
         if self.anthropic_api_key:
             return "anthropic:claude-3-5-sonnet"
+        if self.groq_api_key:
+            return "groq:llama-3.3-70b-versatile"
         return "ollama:gemma4:e4b"
 
 

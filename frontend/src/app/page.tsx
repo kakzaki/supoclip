@@ -544,12 +544,12 @@ export default function Home() {
             <div className="flex items-center gap-3">
               <Image
                 src="/logo.png"
-                alt="SupoClip"
+                alt="HanClipper"
                 width={24}
                 height={24}
                 className="rounded-lg"
               />
-              <h1 className="text-xl font-bold text-black">SupoClip</h1>
+              <h1 className="text-xl font-bold text-black">HanClipper</h1>
             </div>
 
             {/* Desktop nav */}
@@ -827,7 +827,7 @@ export default function Home() {
                   <AlertCircle className="h-4 w-4 text-amber-600" />
                   <AlertDescription className="text-sm text-amber-900">
                     <span className="font-medium">{generationGateMessage}</span>{" "}
-                    Free accounts can browse SupoClip, but video generation requires a paid plan.
+                    Free accounts can browse HanClipper, but video generation requires a paid plan.
                     <Link href="/settings" className="ml-1 font-semibold underline underline-offset-2">
                       Upgrade in settings
                     </Link>.

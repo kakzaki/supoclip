@@ -28,13 +28,13 @@ This guide covers the recommended Docker setup, local development mode, and the 
 
 ## Recommended Setup: Docker
 
-Docker is the intended path for running SupoClip because it starts the frontend, backend, worker, PostgreSQL, and Redis together with the expected wiring.
+Docker is the intended path for running HanClipper because it starts the frontend, backend, worker, PostgreSQL, and Redis together with the expected wiring.
 
 ### 1. Clone the repository
 
 ```bash
 git clone <your-repo-url>
-cd supoclip
+cd hanclipper
 ```
 
 ### 2. Create a local environment file
@@ -81,11 +81,11 @@ docker-compose ps
 
 You should see these services:
 
-- `supoclip-frontend`
-- `supoclip-backend`
-- `supoclip-worker`
-- `supoclip-postgres`
-- `supoclip-redis`
+- `hanclipper-frontend`
+- `hanclipper-backend`
+- `hanclipper-worker`
+- `hanclipper-postgres`
+- `hanclipper-redis`
 
 ### 5. Open the application
 
@@ -164,7 +164,7 @@ npm run dev
 
 ## Data and Volumes
 
-With Docker, SupoClip stores persistent data in named volumes:
+With Docker, HanClipper stores persistent data in named volumes:
 
 - `postgres_data`
 - `redis_data`
@@ -178,7 +178,7 @@ The backend also mounts these local directories:
 
 ## Hosted Mode Versus Self-Hosted Mode
 
-SupoClip defaults to self-host mode:
+HanClipper defaults to self-host mode:
 
 ```env
 SELF_HOST=true

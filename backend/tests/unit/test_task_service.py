@@ -60,7 +60,7 @@ def build_task_service() -> TaskService:
     config = Config()
     config.app_base_url = "http://localhost:3107"
     config.resend_api_key = "re_test"
-    config.resend_from_email = "SupoClip <noreply@example.com>"
+    config.resend_from_email = "HanClipper <noreply@example.com>"
     service = TaskService(db=AsyncMock(), config=config)
     service.cache_repo.get_cache = AsyncMock(return_value=None)
     service.cache_repo.upsert_cache = AsyncMock()

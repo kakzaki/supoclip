@@ -1,10 +1,10 @@
 # Architecture
 
-This guide explains how SupoClip is structured and how a task moves through the system.
+This guide explains how HanClipper is structured and how a task moves through the system.
 
 ## High-Level System
 
-SupoClip is a multi-service application built around asynchronous video processing.
+HanClipper is a multi-service application built around asynchronous video processing.
 
 ```text
 Browser
@@ -231,7 +231,7 @@ This separation lets the browser talk to the frontend domain while the frontend 
 
 ### Authentication
 
-SupoClip uses Better Auth with Prisma and PostgreSQL.
+HanClipper uses Better Auth with Prisma and PostgreSQL.
 
 Important details:
 

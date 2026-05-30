@@ -1,6 +1,6 @@
 # Development
 
-This guide is for contributors working on SupoClip locally.
+This guide is for contributors working on HanClipper locally.
 
 ## Repository Layout
 
@@ -259,8 +259,8 @@ DATABASE_URL=postgresql+asyncpg://localhost:5432/supoclip
 TEST_DATABASE_URL=postgresql+asyncpg://localhost:5432/supoclip
 REDIS_HOST=127.0.0.1
 REDIS_PORT=6379
-BACKEND_AUTH_SECRET=supoclip_test_secret
-BETTER_AUTH_SECRET=supoclip_better_auth_test_secret
+BACKEND_AUTH_SECRET=hanclipper_test_secret
+BETTER_AUTH_SECRET=hanclipper_better_auth_test_secret
 ```
 
 ### Coverage and CI

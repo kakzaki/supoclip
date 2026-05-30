@@ -54,7 +54,7 @@ The refactoring adds `progress` and `progress_message` fields to the tasks table
 
 ```bash
 # Apply migration to existing database
-docker exec -i supoclip-postgres psql -U postgres -d supoclip < backend/migrations/001_add_progress_fields.sql
+docker exec -i hanclipper-postgres psql -U postgres -d supoclip < backend/migrations/001_add_progress_fields.sql
 ```
 
 For fresh installs, the updated `init.sql` already includes these fields.
@@ -87,7 +87,7 @@ Edit `docker-compose.yml` to add a separate worker service:
 
 ```yaml
 services:
-  supoclip-worker:
+  hanclipper-worker:
     build: ./backend
     command: [".venv/bin/arq", "src.workers.tasks.WorkerSettings"]
     environment:
@@ -122,7 +122,7 @@ CMD [".venv/bin/uvicorn", "src.main_refactored:app", "--host", "0.0.0.0", "--por
 Or in `docker-compose.yml`:
 
 ```yaml
-supoclip-backend:
+hanclipper-backend:
   command: [".venv/bin/uvicorn", "src.main_refactored:app", "--host", "0.0.0.0", "--port", "8000"]
 ```
 
@@ -216,10 +216,10 @@ curl http://localhost:8000/tasks/{task_id}/clips
 
 ```bash
 # If using separate worker service:
-docker-compose logs -f supoclip-worker
+docker-compose logs -f hanclipper-worker
 
 # Or check Redis queue status:
-docker exec -it supoclip-redis redis-cli
+docker exec -it hanclipper-redis redis-cli
 > KEYS arq:*
 > LLEN arq:queue
 ```
@@ -229,7 +229,7 @@ docker exec -it supoclip-redis redis-cli
 The arq queue stores job status in Redis. You can inspect with:
 
 ```bash
-docker exec -it supoclip-redis redis-cli
+docker exec -it hanclipper-redis redis-cli
 > KEYS arq:job:*
 > GET arq:job:{job_id}
 ```
@@ -242,7 +242,7 @@ If issues arise, you can rollback:
 
 ```yaml
 # docker-compose.yml
-supoclip-backend:
+hanclipper-backend:
   command: [".venv/bin/uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]
 ```
 
@@ -282,13 +282,13 @@ docker-compose logs redis
 
 1. Check worker is running:
 ```bash
-docker-compose ps supoclip-worker
-docker-compose logs supoclip-worker
+docker-compose ps hanclipper-worker
+docker-compose logs hanclipper-worker
 ```
 
 2. Check Redis connection:
 ```bash
-docker exec supoclip-backend .venv/bin/python -c "import redis; r=redis.Redis(host='redis'); print(r.ping())"
+docker exec hanclipper-backend .venv/bin/python -c "import redis; r=redis.Redis(host='redis'); print(r.ping())"
 ```
 
 ### Database migration errors

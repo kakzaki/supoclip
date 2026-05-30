@@ -46,8 +46,8 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="SupoClip API",
-    description="Python-based backend for SupoClip",
+    title="HanClipper API",
+    description="Python-based backend for HanClipper",
     version="0.1.0",
     lifespan=lifespan,
 )
@@ -83,7 +83,7 @@ def _resolve_uploaded_video_path(url: str) -> Path:
 @app.get("/")
 def read_root():
     return {
-        "message": "This is the SupoClip FastAPI-based API. Visit /docs for the API documentation."
+        "message": "This is the HanClipper FastAPI-based API. Visit /docs for the API documentation."
     }
 
 

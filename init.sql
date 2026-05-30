@@ -1,4 +1,4 @@
--- Database initialization script for SupoClip
+-- Database initialization script for HanClipper
 -- Create database schema with required tables
 
 -- Enable UUID extension for generating UUIDs

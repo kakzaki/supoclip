@@ -1,7 +1,7 @@
-# SupoClip - Quick Start Script for PowerShell
+# HanClipper - Quick Start Script for PowerShell
 
 Write-Host "============================================" -ForegroundColor Cyan
-Write-Host "  SupoClip - AI Video Clipping Tool" -ForegroundColor Cyan
+Write-Host "  HanClipper - AI Video Clipping Tool" -ForegroundColor Cyan
 Write-Host "============================================" -ForegroundColor Cyan
 Write-Host ""
 
@@ -39,7 +39,7 @@ if ($LASTEXITCODE -ne 0) {
     }
 }
 
-Write-Host "Starting SupoClip..." -ForegroundColor Green
+Write-Host "Starting HanClipper..." -ForegroundColor Green
 Write-Host ""
 
 # Build and start containers
@@ -55,7 +55,7 @@ if ($dockerComposeCmd -eq "docker compose") {
 
 if ($LASTEXITCODE -eq 0) {
     Write-Host ""
-    Write-Host "SupoClip is starting up!" -ForegroundColor Green
+    Write-Host "HanClipper is starting up!" -ForegroundColor Green
     Write-Host ""
     Write-Host "Services will be available at:"
     Write-Host "  - Frontend:  http://localhost:3107"
