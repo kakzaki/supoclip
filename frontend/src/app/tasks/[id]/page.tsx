@@ -8,6 +8,8 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Input } from "@/components/ui/input";
+import { Slider } from "@/components/ui/slider";
+import { Separator } from "@/components/ui/separator";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   AlertDialog,
@@ -106,6 +108,7 @@ interface TaskDetails {
 interface FontOption {
   name: string;
   display_name: string;
+  format?: string;
 }
 
 export default function TaskPage() {
@@ -1379,194 +1382,261 @@ export default function TaskPage() {
                       </div>
 
                       {editingClipId === clip.id && (
-                        <div className="mt-4 p-3 border rounded-lg space-y-3 bg-gray-50">
-                          <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-                            <Input
-                              value={startOffset}
-                              onChange={(e) => setStartOffset(e.target.value)}
-                              placeholder="Start trim (sec)"
-                            />
-                            <Input
-                              value={endOffset}
-                              onChange={(e) => setEndOffset(e.target.value)}
-                              placeholder="End trim (sec)"
-                            />
-                            <Button size="sm" onClick={() => handleTrimClip(clip.id)}>
-                              <Scissors className="w-4 h-4" />
-                              Trim
+                        <div className="mt-4 p-4 border rounded-xl space-y-4 bg-white shadow-sm">
+                          {/* Header */}
+                          <div className="flex items-center justify-between">
+                            <h4 className="font-semibold text-sm text-black flex items-center gap-2">
+                              <Edit2 className="w-4 h-4" />
+                              Edit Clip {clip.clip_order}
+                            </h4>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-7 w-7 p-0"
+                              onClick={() => setEditingClipId(null)}
+                            >
+                              <X className="w-4 h-4" />
                             </Button>
-                          </div>
-                          <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-                            <Input
-                              value={splitTime}
-                              onChange={(e) => setSplitTime(e.target.value)}
-                              placeholder="Split at (sec)"
-                            />
-                            <Button size="sm" variant="outline" onClick={() => handleSplitClip(clip.id)}>
-                              <SplitSquareVertical className="w-4 h-4" />
-                              Split
-                            </Button>
-                            <Button size="sm" variant="outline" onClick={() => handleTrimClip(clip.id)}>
-                              <RefreshCw className="w-4 h-4" />
-                              Regenerate
-                            </Button>
-                          </div>
-                          <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-                            <Input
-                              value={captionText}
-                              onChange={(e) => setCaptionText(e.target.value)}
-                              placeholder="Caption text"
-                            />
-                            <Select value={captionPosition} onValueChange={setCaptionPosition}>
-                              <SelectTrigger>
-                                <SelectValue placeholder="Caption position" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="top">Top</SelectItem>
-                                <SelectItem value="middle">Middle</SelectItem>
-                                <SelectItem value="bottom">Bottom</SelectItem>
-                              </SelectContent>
-                            </Select>
-                            <Input
-                              value={highlightWords}
-                              onChange={(e) => setHighlightWords(e.target.value)}
-                              placeholder="Highlights: word1, word2"
-                            />
-                          </div>
-                          <p className="text-xs text-gray-500 font-medium mt-1">Caption Style</p>
-                          <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-                            <Select value={captionFontFamily} onValueChange={setCaptionFontFamily}>
-                              <SelectTrigger className="h-9 text-xs">
-                                <SelectValue placeholder="Font" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {availableFonts.map((font) => (
-                                  <SelectItem key={font.name} value={font.name} className="text-xs">
-                                    {font.display_name}
-                                  </SelectItem>
-                                ))}
-                                {availableFonts.length === 0 && (
-                                  <SelectItem value="TikTokSans-Regular">TikTok Sans</SelectItem>
-                                )}
-                              </SelectContent>
-                            </Select>
-                            <Input
-                              type="number"
-                              min={12}
-                              max={128}
-                              value={captionFontSize}
-                              onChange={(e) => setCaptionFontSize(e.target.value)}
-                              placeholder="Size"
-                              className="h-9 text-xs"
-                            />
-                            <div className="flex items-center gap-1">
-                              <input
-                                type="color"
-                                value={captionFontColor}
-                                onChange={(e) => setCaptionFontColor(e.target.value)}
-                                className="h-9 w-9 rounded border border-gray-300 cursor-pointer flex-shrink-0"
-                                title="Font color"
-                              />
-                              <Input
-                                value={captionFontColor}
-                                onChange={(e) => setCaptionFontColor(e.target.value)}
-                                placeholder="#FFFFFF"
-                                className="h-9 text-xs"
-                              />
-                            </div>
-                            <Input
-                              value={captionHighlightColor}
-                              onChange={(e) => setCaptionHighlightColor(e.target.value)}
-                              placeholder="Highlight #FFD700"
-                              className="h-9 text-xs"
-                            />
                           </div>
 
-                          {/* Live Caption Preview */}
-                          <div
-                            className="rounded-lg bg-black p-6 text-center space-y-1"
-                            style={{ minHeight: "100px" }}
-                          >
-                            <p className="text-[10px] text-gray-500 uppercase tracking-wider mb-2">
-                              Live Preview
-                            </p>
-                            {captionText.trim() ? (
-                              <p
-                                style={{
-                                  fontFamily: `'${captionFontFamily}', system-ui, -apple-system, sans-serif`,
-                                  fontSize: `${Math.max(Math.min(Number(captionFontSize) || 64, 128), 12) * 0.55}px`,
-                                  color: captionFontColor,
-                                  textAlign: "center",
-                                  lineHeight: "1.6",
-                                  textShadow: "0 2px 8px rgba(0,0,0,0.8), 0 0px 2px rgba(0,0,0,0.9)",
-                                }}
-                                className="font-bold"
-                              >
-                                {captionText.split(" ").map((word, i) => {
-                                  const cleanWord = word.replace(/[.,!?;:]+$/, "");
-                                  const isHighlighted =
-                                    highlightWords
+                          {/* Trim & Split — quick actions */}
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                            <div className="flex items-center gap-1.5">
+                              <Input
+                                value={startOffset}
+                                onChange={(e) => setStartOffset(e.target.value)}
+                                placeholder="Trim start (s)"
+                                className="h-8 text-xs"
+                              />
+                              <Input
+                                value={endOffset}
+                                onChange={(e) => setEndOffset(e.target.value)}
+                                placeholder="End (s)"
+                                className="h-8 text-xs"
+                              />
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                              <Input
+                                value={splitTime}
+                                onChange={(e) => setSplitTime(e.target.value)}
+                                placeholder="Split at (s)"
+                                className="h-8 text-xs"
+                              />
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                              <Button size="sm" className="h-8 text-xs flex-1" onClick={() => handleTrimClip(clip.id)}>
+                                <Scissors className="w-3.5 h-3.5 mr-1" />
+                                Trim
+                              </Button>
+                              <Button size="sm" variant="outline" className="h-8 text-xs flex-1" onClick={() => handleSplitClip(clip.id)}>
+                                <SplitSquareVertical className="w-3.5 h-3.5 mr-1" />
+                                Split
+                              </Button>
+                              <Button size="sm" variant="outline" className="h-8 text-xs" onClick={() => handleTrimClip(clip.id)}>
+                                <RefreshCw className="w-3.5 h-3.5" />
+                              </Button>
+                            </div>
+                          </div>
+
+                          <Separator />
+
+                          {/* ─── Caption Editor ─── */}
+                          <div className="space-y-3">
+                            <h5 className="text-xs font-semibold text-gray-500 uppercase tracking-wider flex items-center gap-1.5">
+                              <Subtitles className="w-3.5 h-3.5" />
+                              Caption Style
+                            </h5>
+
+                            {/* Live Preview */}
+                            <div className="rounded-xl bg-gradient-to-b from-gray-900 to-black p-5 text-center overflow-hidden border border-gray-800">
+                              <p className="text-[9px] text-gray-600 uppercase tracking-[0.15em] mb-3">
+                                Live Preview
+                              </p>
+                              {captionText.trim() ? (
+                                <p
+                                  style={{
+                                    fontFamily: `'${captionFontFamily}', system-ui, -apple-system, sans-serif`,
+                                    fontSize: `${Math.max(Math.min(Number(captionFontSize) || 64, 128), 12) * 0.5}px`,
+                                    color: captionFontColor,
+                                    textAlign: "center",
+                                    lineHeight: "1.7",
+                                    textShadow:
+                                      "0 2px 8px rgba(0,0,0,0.9), 0 0px 3px rgba(0,0,0,0.95)",
+                                  }}
+                                  className="font-bold leading-relaxed"
+                                >
+                                  {captionText.split(" ").map((word, i) => {
+                                    const cleanWord = word.replace(/[.,!?;:]+$/, "");
+                                    const isHighlighted = highlightWords
                                       .split(",")
                                       .map((w) => w.trim().toLowerCase())
                                       .filter(Boolean)
                                       .includes(cleanWord.toLowerCase());
-                                  return (
-                                    <span
-                                      key={i}
-                                      style={{ color: isHighlighted ? captionHighlightColor : captionFontColor }}
-                                    >
-                                      {word}{" "}
-                                    </span>
-                                  );
-                                })}
-                              </p>
-                            ) : (
-                              <p
-                                style={{
-                                  fontFamily: `'${captionFontFamily}', system-ui, sans-serif`,
-                                  fontSize: `${Math.max(Math.min(Number(captionFontSize) || 64, 128), 12) * 0.55}px`,
-                                  color: captionFontColor,
-                                  textAlign: "center",
-                                  lineHeight: "1.6",
-                                  opacity: 0.5,
-                                }}
-                                className="font-bold"
-                              >
-                                Type caption text above to preview
-                              </p>
-                            )}
-                          </div>
-                          <div className="flex items-center gap-3 text-[10px] text-gray-400 px-1">
-                            <span>{availableFonts.find(f => f.name === captionFontFamily)?.display_name || captionFontFamily}</span>
-                            <span>·</span>
-                            <span>{captionFontSize}px</span>
-                            <span>·</span>
-                            <div className="flex items-center gap-1">
-                              <div className="w-2.5 h-2.5 rounded-full border border-gray-400" style={{ backgroundColor: captionFontColor }} />
-                              <span>{captionFontColor}</span>
+                                    return (
+                                      <span
+                                        key={i}
+                                        style={{ color: isHighlighted ? captionHighlightColor : captionFontColor }}
+                                      >
+                                        {word}{" "}
+                                      </span>
+                                    );
+                                  })}
+                                </p>
+                              ) : (
+                                <p
+                                  style={{
+                                    fontFamily: `'${captionFontFamily}', system-ui, sans-serif`,
+                                    fontSize: "14px",
+                                    color: captionFontColor,
+                                    textAlign: "center",
+                                    lineHeight: "1.7",
+                                    opacity: 0.35,
+                                  }}
+                                >
+                                  Your caption preview appears here
+                                </p>
+                              )}
                             </div>
-                            <span>·</span>
-                            <div className="flex items-center gap-1">
-                              <div className="w-2.5 h-2.5 rounded-full border border-gray-400" style={{ backgroundColor: captionHighlightColor }} />
-                              <span>highlight</span>
+
+                            {/* Caption text & position */}
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                              <Input
+                                value={captionText}
+                                onChange={(e) => setCaptionText(e.target.value)}
+                                placeholder="Caption text"
+                                className="h-9 text-sm sm:col-span-2"
+                              />
+                              <Select value={captionPosition} onValueChange={setCaptionPosition}>
+                                <SelectTrigger className="h-9">
+                                  <SelectValue placeholder="Bottom" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="top">Top</SelectItem>
+                                  <SelectItem value="middle">Middle</SelectItem>
+                                  <SelectItem value="bottom">Bottom</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </div>
+
+                            <Input
+                              value={highlightWords}
+                              onChange={(e) => setHighlightWords(e.target.value)}
+                              placeholder="Highlighted words: amazing, wow, never (comma-separated)"
+                              className="h-9 text-xs"
+                            />
+
+                            {/* Font family + size slider */}
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                              <div className="space-y-1.5">
+                                <label className="text-[11px] text-gray-500 font-medium">Font</label>
+                                <Select value={captionFontFamily} onValueChange={setCaptionFontFamily}>
+                                  <SelectTrigger className="h-9 text-sm">
+                                    <SelectValue placeholder="TikTok Sans" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {availableFonts.map((font) => (
+                                      <SelectItem key={font.name} value={font.name}>
+                                        <span style={{ fontFamily: `'${font.name}', system-ui, sans-serif` }}>
+                                          {font.display_name}
+                                        </span>
+                                      </SelectItem>
+                                    ))}
+                                    {availableFonts.length === 0 && (
+                                      <SelectItem value="TikTokSans-Regular">TikTok Sans Regular</SelectItem>
+                                    )}
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                              <div className="space-y-1.5">
+                                <label className="text-[11px] text-gray-500 font-medium">
+                                  Size: <span className="text-gray-700 font-semibold">{captionFontSize}px</span>
+                                </label>
+                                <Slider
+                                  value={[Number(captionFontSize) || 64]}
+                                  onValueChange={([v]) => setCaptionFontSize(String(v))}
+                                  min={12}
+                                  max={128}
+                                  step={2}
+                                  className="py-1"
+                                />
+                              </div>
+                            </div>
+
+                            {/* Colors */}
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                              <div className="space-y-1.5">
+                                <label className="text-[11px] text-gray-500 font-medium">Text Color</label>
+                                <div className="flex items-center gap-2">
+                                  <input
+                                    type="color"
+                                    value={captionFontColor}
+                                    onChange={(e) => setCaptionFontColor(e.target.value)}
+                                    className="h-9 w-10 rounded-lg border border-gray-300 cursor-pointer flex-shrink-0"
+                                    title="Font color"
+                                  />
+                                  <div className="flex gap-1 flex-wrap">
+                                    {["#FFFFFF", "#FFD700", "#FF6B6B", "#4ECDC4", "#45B7D1", "#A78BFA"].map((c) => (
+                                      <button
+                                        key={c}
+                                        type="button"
+                                        onClick={() => setCaptionFontColor(c)}
+                                        className={`w-6 h-6 rounded-md border-2 transition-all ${
+                                          captionFontColor.toUpperCase() === c.toUpperCase()
+                                            ? "border-gray-800 scale-110"
+                                            : "border-gray-200 hover:scale-105"
+                                        }`}
+                                        style={{ backgroundColor: c }}
+                                        title={c}
+                                      />
+                                    ))}
+                                  </div>
+                                </div>
+                              </div>
+                              <div className="space-y-1.5">
+                                <label className="text-[11px] text-gray-500 font-medium">Highlight Color</label>
+                                <div className="flex items-center gap-2">
+                                  <input
+                                    type="color"
+                                    value={captionHighlightColor}
+                                    onChange={(e) => setCaptionHighlightColor(e.target.value)}
+                                    className="h-9 w-10 rounded-lg border border-gray-300 cursor-pointer flex-shrink-0"
+                                    title="Highlight color"
+                                  />
+                                  <div className="flex gap-1 flex-wrap">
+                                    {["#FFD700", "#FF6B6B", "#4ADE80", "#FACC15", "#38BDF8", "#FFFFFF"].map((c) => (
+                                      <button
+                                        key={c}
+                                        type="button"
+                                        onClick={() => setCaptionHighlightColor(c)}
+                                        className={`w-6 h-6 rounded-md border-2 transition-all ${
+                                          captionHighlightColor.toUpperCase() === c.toUpperCase()
+                                            ? "border-gray-800 scale-110"
+                                            : "border-gray-200 hover:scale-105"
+                                        }`}
+                                        style={{ backgroundColor: c }}
+                                        title={c}
+                                      />
+                                    ))}
+                                  </div>
+                                </div>
+                              </div>
                             </div>
                           </div>
 
                           <Button
-                            size="sm"
-                            variant="outline"
+                            className="w-full h-10 text-sm"
                             onClick={() => handleUpdateCaptions(clip.id)}
-                            disabled={updatingCaptionClipId === clip.id}
+                            disabled={updatingCaptionClipId === clip.id || !captionText.trim()}
                           >
                             {updatingCaptionClipId === clip.id ? (
                               <>
-                                <Loader2 className="w-4 h-4 animate-spin" />
-                                Rendering...
+                                <Loader2 className="w-4 h-4 animate-spin mr-1.5" />
+                                Rendering captions...
                               </>
                             ) : (
                               <>
-                                <Subtitles className="w-4 h-4" />
-                                Update Captions
+                                <Subtitles className="w-4 h-4 mr-1.5" />
+                                Apply Caption Style
                               </>
                             )}
                           </Button>

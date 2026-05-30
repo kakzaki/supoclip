@@ -9,6 +9,7 @@ from datetime import datetime
 from pathlib import Path
 import json
 import hashlib
+import shutil
 from time import perf_counter
 
 import redis.asyncio as redis
@@ -845,12 +846,15 @@ class TaskService:
         if not clip or clip["task_id"] != task_id:
             raise ValueError("Clip not found")
 
-        # Use the clean (no-subtitle) variant if available, so we don't
-        # overlay new captions on top of the old ones.
-        input_path = Path(clip["file_path"])
-        clean_candidate = input_path.with_stem(input_path.stem + "_clean")
+        # Resolve the clean (no-subtitle) source for caption overlay.
+        # If the clip itself has no burned-in subtitles, use it directly.
+        # Otherwise look for a _clean sibling created during initial generation.
+        clip_path = Path(clip["file_path"])
+        clean_candidate = clip_path.with_stem(clip_path.stem + "_clean")
         if clean_candidate.exists():
             input_path = clean_candidate
+        else:
+            input_path = clip_path
 
         if not input_path.exists():
             raise ValueError("Clip file not found")
@@ -867,6 +871,12 @@ class TaskService:
             highlight_color=highlight_color,
         )
         copy_clip_source_ranges(input_path, output_path)
+
+        # Preserve a clean copy for future edits so captions never stack.
+        clean_output = output_path.with_stem(output_path.stem + "_clean")
+        if input_path != clean_output:
+            shutil.copy2(input_path, clean_output)
+            copy_clip_source_ranges(input_path, clean_output)
 
         await self.clip_repo.update_clip(
             self.db,

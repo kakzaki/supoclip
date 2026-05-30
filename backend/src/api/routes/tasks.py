@@ -637,7 +637,10 @@ async def update_clip_captions(
 
         # Optional font styling
         font_family = payload.get("font_family")
-        font_size = int(payload.get("font_size", 64))
+        try:
+            font_size = int(payload.get("font_size", 64))
+        except (ValueError, TypeError):
+            font_size = 64
         font_color = str(payload.get("font_color", "#FFFFFF"))
         highlight_color = str(payload.get("highlight_color", "#FFD700"))
 

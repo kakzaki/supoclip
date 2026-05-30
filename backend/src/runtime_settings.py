@@ -18,6 +18,7 @@ RUNTIME_SETTING_KEYS: tuple[str, ...] = (
     "LLM",
     "WHISPER_MODEL",
     "GROQ_API_KEY",
+    "DEEPSEEK_API_KEY",
     "OPENAI_API_KEY",
     "GOOGLE_API_KEY",
     "ANTHROPIC_API_KEY",
