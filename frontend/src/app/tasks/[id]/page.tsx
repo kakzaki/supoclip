@@ -51,6 +51,7 @@ import {
   Settings2,
   Type,
   Clapperboard,
+  Loader2,
 } from "lucide-react";
 import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from "@/components/ui/tooltip";
 import { Progress } from "@/components/ui/progress";
@@ -130,6 +131,10 @@ export default function TaskPage() {
   const [captionText, setCaptionText] = useState("");
   const [captionPosition, setCaptionPosition] = useState("bottom");
   const [highlightWords, setHighlightWords] = useState("");
+  const [captionFontFamily, setCaptionFontFamily] = useState("TikTokSans-Regular");
+  const [captionFontSize, setCaptionFontSize] = useState("64");
+  const [captionFontColor, setCaptionFontColor] = useState("#FFFFFF");
+  const [captionHighlightColor, setCaptionHighlightColor] = useState("#FFD700");
   const [exportPreset, setExportPreset] = useState("original");
 
   const [projectFontFamily, setProjectFontFamily] = useState("TikTokSans-Regular");
@@ -143,6 +148,7 @@ export default function TaskPage() {
   const [projectFilteredWords, setProjectFilteredWords] = useState("");
   const [isApplyingSettings, setIsApplyingSettings] = useState(false);
   const [settingsSheetOpen, setSettingsSheetOpen] = useState(false);
+  const [updatingCaptionClipId, setUpdatingCaptionClipId] = useState<string | null>(null);
   const [availableFonts, setAvailableFonts] = useState<FontOption[]>([]);
   const [availableTemplates, setAvailableTemplates] = useState<
     Array<{ id: string; name: string; description: string; animation: string }>
@@ -265,7 +271,32 @@ export default function TaskPage() {
           return;
         }
         const data = await response.json();
-        setAvailableFonts(data.fonts || []);
+        const fonts: FontOption[] = data.fonts || [];
+        setAvailableFonts(fonts);
+
+        // Inject @font-face styles so fonts are actually rendered in the browser
+        const fontFaceStyles = fonts.map((font) => {
+          const format = font.format === "otf" ? "opentype" : "truetype";
+          return `
+            @font-face {
+              font-family: '${font.name}';
+              src: url('/api/fonts/${font.name}') format('${format}');
+              font-weight: normal;
+              font-style: normal;
+            }
+          `;
+        }).join("\n");
+
+        const styleElement = document.createElement("style");
+        styleElement.id = "custom-fonts";
+        styleElement.innerHTML = fontFaceStyles;
+
+        const existingStyle = document.getElementById("custom-fonts");
+        if (existingStyle) {
+          existingStyle.remove();
+        }
+
+        document.head.appendChild(styleElement);
       } catch (loadError) {
         console.error("Failed to load fonts:", loadError);
       }
@@ -533,26 +564,44 @@ export default function TaskPage() {
   };
 
   const handleUpdateCaptions = async (clipId: string) => {
-    if (!session?.user?.id || !params.id) return;
-    const response = await fetch(`${taskApiUrl}/${params.id}/clips/${clipId}/captions`, {
-      method: "PATCH",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        caption_text: captionText,
-        position: captionPosition,
-        highlight_words: highlightWords
-          .split(",")
-          .map((w) => w.trim())
-          .filter(Boolean),
-      }),
-    });
-    if (!response.ok) {
-      alert(await buildSupportError(response, "Failed to update captions"));
-      return;
+    if (!session?.user?.id || !params.id || updatingCaptionClipId) return;
+    const parsedFontSize = Number(captionFontSize || "64");
+    const safeFontSize = Number.isFinite(parsedFontSize) ? Math.max(12, Math.min(128, Math.round(parsedFontSize))) : 64;
+    const normalizedFontColor = /^#[0-9A-Fa-f]{6}$/.test(captionFontColor) ? captionFontColor : "#FFFFFF";
+    const normalizedHighlightColor = /^#[0-9A-Fa-f]{6}$/.test(captionHighlightColor) ? captionHighlightColor : "#FFD700";
+
+    setUpdatingCaptionClipId(clipId);
+    try {
+      const response = await fetch(`${taskApiUrl}/${params.id}/clips/${clipId}/captions`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          caption_text: captionText,
+          position: captionPosition,
+          highlight_words: highlightWords
+            .split(",")
+            .map((w) => w.trim())
+            .filter(Boolean),
+          font_family: captionFontFamily || null,
+          font_size: safeFontSize,
+          font_color: normalizedFontColor,
+          highlight_color: normalizedHighlightColor,
+        }),
+      });
+      if (!response.ok) {
+        alert(await buildSupportError(response, "Failed to update captions"));
+        return;
+      }
+      await fetchTaskStatus();
+      setEditingClipId(null);
+    } catch (err) {
+      console.error("Error updating captions:", err);
+      alert(err instanceof Error ? err.message : "Failed to update captions");
+    } finally {
+      setUpdatingCaptionClipId(null);
     }
-    await fetchTaskStatus();
   };
 
   const handleApplyProjectSettings = async () => {
@@ -1309,6 +1358,9 @@ export default function TaskPage() {
                           onClick={() => {
                             setEditingClipId(editingClipId === clip.id ? null : clip.id);
                             setCaptionText(clip.text || "");
+                            setCaptionFontFamily(projectFontFamily);
+                            setCaptionFontSize(projectFontSize);
+                            setCaptionFontColor(projectFontColor);
                           }}
                         >
                           <Scissors className="w-4 h-4" />
@@ -1381,9 +1433,142 @@ export default function TaskPage() {
                               placeholder="Highlights: word1, word2"
                             />
                           </div>
-                          <Button size="sm" variant="outline" onClick={() => handleUpdateCaptions(clip.id)}>
-                            <Subtitles className="w-4 h-4" />
-                            Update Captions
+                          <p className="text-xs text-gray-500 font-medium mt-1">Caption Style</p>
+                          <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                            <Select value={captionFontFamily} onValueChange={setCaptionFontFamily}>
+                              <SelectTrigger className="h-9 text-xs">
+                                <SelectValue placeholder="Font" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {availableFonts.map((font) => (
+                                  <SelectItem key={font.name} value={font.name} className="text-xs">
+                                    {font.display_name}
+                                  </SelectItem>
+                                ))}
+                                {availableFonts.length === 0 && (
+                                  <SelectItem value="TikTokSans-Regular">TikTok Sans</SelectItem>
+                                )}
+                              </SelectContent>
+                            </Select>
+                            <Input
+                              type="number"
+                              min={12}
+                              max={128}
+                              value={captionFontSize}
+                              onChange={(e) => setCaptionFontSize(e.target.value)}
+                              placeholder="Size"
+                              className="h-9 text-xs"
+                            />
+                            <div className="flex items-center gap-1">
+                              <input
+                                type="color"
+                                value={captionFontColor}
+                                onChange={(e) => setCaptionFontColor(e.target.value)}
+                                className="h-9 w-9 rounded border border-gray-300 cursor-pointer flex-shrink-0"
+                                title="Font color"
+                              />
+                              <Input
+                                value={captionFontColor}
+                                onChange={(e) => setCaptionFontColor(e.target.value)}
+                                placeholder="#FFFFFF"
+                                className="h-9 text-xs"
+                              />
+                            </div>
+                            <Input
+                              value={captionHighlightColor}
+                              onChange={(e) => setCaptionHighlightColor(e.target.value)}
+                              placeholder="Highlight #FFD700"
+                              className="h-9 text-xs"
+                            />
+                          </div>
+
+                          {/* Live Caption Preview */}
+                          <div
+                            className="rounded-lg bg-black p-6 text-center space-y-1"
+                            style={{ minHeight: "100px" }}
+                          >
+                            <p className="text-[10px] text-gray-500 uppercase tracking-wider mb-2">
+                              Live Preview
+                            </p>
+                            {captionText.trim() ? (
+                              <p
+                                style={{
+                                  fontFamily: `'${captionFontFamily}', system-ui, -apple-system, sans-serif`,
+                                  fontSize: `${Math.max(Math.min(Number(captionFontSize) || 64, 128), 12) * 0.55}px`,
+                                  color: captionFontColor,
+                                  textAlign: "center",
+                                  lineHeight: "1.6",
+                                  textShadow: "0 2px 8px rgba(0,0,0,0.8), 0 0px 2px rgba(0,0,0,0.9)",
+                                }}
+                                className="font-bold"
+                              >
+                                {captionText.split(" ").map((word, i) => {
+                                  const cleanWord = word.replace(/[.,!?;:]+$/, "");
+                                  const isHighlighted =
+                                    highlightWords
+                                      .split(",")
+                                      .map((w) => w.trim().toLowerCase())
+                                      .filter(Boolean)
+                                      .includes(cleanWord.toLowerCase());
+                                  return (
+                                    <span
+                                      key={i}
+                                      style={{ color: isHighlighted ? captionHighlightColor : captionFontColor }}
+                                    >
+                                      {word}{" "}
+                                    </span>
+                                  );
+                                })}
+                              </p>
+                            ) : (
+                              <p
+                                style={{
+                                  fontFamily: `'${captionFontFamily}', system-ui, sans-serif`,
+                                  fontSize: `${Math.max(Math.min(Number(captionFontSize) || 64, 128), 12) * 0.55}px`,
+                                  color: captionFontColor,
+                                  textAlign: "center",
+                                  lineHeight: "1.6",
+                                  opacity: 0.5,
+                                }}
+                                className="font-bold"
+                              >
+                                Type caption text above to preview
+                              </p>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-3 text-[10px] text-gray-400 px-1">
+                            <span>{availableFonts.find(f => f.name === captionFontFamily)?.display_name || captionFontFamily}</span>
+                            <span>·</span>
+                            <span>{captionFontSize}px</span>
+                            <span>·</span>
+                            <div className="flex items-center gap-1">
+                              <div className="w-2.5 h-2.5 rounded-full border border-gray-400" style={{ backgroundColor: captionFontColor }} />
+                              <span>{captionFontColor}</span>
+                            </div>
+                            <span>·</span>
+                            <div className="flex items-center gap-1">
+                              <div className="w-2.5 h-2.5 rounded-full border border-gray-400" style={{ backgroundColor: captionHighlightColor }} />
+                              <span>highlight</span>
+                            </div>
+                          </div>
+
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => handleUpdateCaptions(clip.id)}
+                            disabled={updatingCaptionClipId === clip.id}
+                          >
+                            {updatingCaptionClipId === clip.id ? (
+                              <>
+                                <Loader2 className="w-4 h-4 animate-spin" />
+                                Rendering...
+                              </>
+                            ) : (
+                              <>
+                                <Subtitles className="w-4 h-4" />
+                                Update Captions
+                              </>
+                            )}
                           </Button>
                         </div>
                       )}

@@ -624,7 +624,7 @@ async def merge_clips(
 async def update_clip_captions(
     task_id: str, clip_id: str, request: Request, db: AsyncSession = Depends(get_db)
 ):
-    """Update clip caption text, timing style and highlighted words."""
+    """Update clip caption text, style, position, and highlighted words."""
     try:
         payload = await request.json()
         caption_text = str(payload.get("caption_text", "")).strip()
@@ -635,6 +635,12 @@ async def update_clip_captions(
                 status_code=400, detail="highlight_words must be an array"
             )
 
+        # Optional font styling
+        font_family = payload.get("font_family")
+        font_size = int(payload.get("font_size", 64))
+        font_color = str(payload.get("font_color", "#FFFFFF"))
+        highlight_color = str(payload.get("highlight_color", "#FFD700"))
+
         task_service = TaskService(db)
         await _require_task_owner(request, task_service, db, task_id)
         updated_clip = await task_service.update_clip_captions(
@@ -643,6 +649,10 @@ async def update_clip_captions(
             caption_text,
             position,
             [str(word) for word in highlight_words],
+            font_family=font_family,
+            font_size=font_size,
+            font_color=font_color,
+            highlight_color=highlight_color,
         )
         return {"clip": updated_clip}
     except ValueError as e:

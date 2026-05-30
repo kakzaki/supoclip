@@ -836,12 +836,22 @@ class TaskService:
         caption_text: str,
         position: str,
         highlight_words: list[str],
+        font_family: str | None = None,
+        font_size: int = 64,
+        font_color: str = "#FFFFFF",
+        highlight_color: str = "#FFD700",
     ) -> Dict[str, Any]:
         clip = await self.clip_repo.get_clip_by_id(self.db, clip_id)
         if not clip or clip["task_id"] != task_id:
             raise ValueError("Clip not found")
 
+        # Use the clean (no-subtitle) variant if available, so we don't
+        # overlay new captions on top of the old ones.
         input_path = Path(clip["file_path"])
+        clean_candidate = input_path.with_stem(input_path.stem + "_clean")
+        if clean_candidate.exists():
+            input_path = clean_candidate
+
         if not input_path.exists():
             raise ValueError("Clip file not found")
 
@@ -851,6 +861,10 @@ class TaskService:
             caption_text,
             position,
             highlight_words,
+            font_family=font_family,
+            font_size=font_size,
+            font_color=font_color,
+            highlight_color=highlight_color,
         )
         copy_clip_source_ranges(input_path, output_path)
 

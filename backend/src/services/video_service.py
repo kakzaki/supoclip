@@ -246,7 +246,31 @@ class VideoService:
                 logger.error(f"Failed to create clip {clip_index + 1}")
                 return None
 
+            # Save a clean (no-subtitle) variant for later caption re-styling.
+            # Without this, editing captions overlays new subs on top of old ones.
+            clean_filename = clip_path.stem + "_clean" + clip_path.suffix
+            clean_path = output_dir / clean_filename
+            if add_subtitles:
+                await run_in_thread(
+                    create_optimized_clip,
+                    video_path,
+                    start_seconds,
+                    end_seconds,
+                    clean_path,
+                    False,  # no subtitles
+                    font_family,
+                    font_size,
+                    font_color,
+                    caption_template,
+                    output_format,
+                    keep_ranges,
+                )
+            else:
+                clean_path = clip_path
+
             save_clip_source_ranges(clip_path, keep_ranges)
+            if clean_path != clip_path:
+                save_clip_source_ranges(clean_path, keep_ranges)
             cleaned_duration = sum(end - start for start, end in keep_ranges)
             logger.info(
                 f"Created clip {clip_index + 1}: {cleaned_duration:.1f}s"
@@ -255,6 +279,7 @@ class VideoService:
                 "clip_id": clip_index + 1,
                 "filename": clip_filename,
                 "path": str(clip_path),
+                "clean_path": str(clean_path) if clean_path != clip_path else None,
                 "start_time": segment["start_time"],
                 "end_time": segment["end_time"],
                 "duration": cleaned_duration,

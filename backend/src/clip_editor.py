@@ -7,9 +7,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, List
+import logging
 import subprocess
 import tempfile
 import uuid
+
+from .font_registry import find_font_path, get_font_family_name
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -238,12 +243,31 @@ def merge_clip_files(paths: Iterable[Path], output_dir: Path) -> Path:
     return output_path
 
 
+def _resolve_caption_font(font_family: str | None) -> str:
+    """Resolve a user-friendly font family name to a real system font name."""
+    if not font_family:
+        return "Arial"
+    try:
+        font_path = find_font_path(font_family, allow_all_user_fonts=True)
+        if font_path:
+            resolved = get_font_family_name(Path(font_path))
+            if resolved:
+                return resolved
+    except Exception:
+        logger.debug("Could not resolve font %s, falling back to Arial", font_family)
+    return "Arial"
+
+
 def overlay_custom_captions(
     input_path: Path,
     output_dir: Path,
     caption_text: str,
     position: str,
     highlight_words: List[str],
+    font_family: str | None = None,
+    font_size: int = 64,
+    font_color: str = "#FFFFFF",
+    highlight_color: str = "#FFD700",
 ) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / _safe_name("caption")
@@ -251,6 +275,9 @@ def overlay_custom_captions(
     if not words:
         _run(["ffmpeg", "-y", "-i", str(input_path), *_encode_args(), str(output_path)])
         return output_path
+
+    resolved_font = _resolve_caption_font(font_family)
+    scaled_font_size = max(12, min(128, font_size))
 
     width, height = _ffprobe_size(input_path)
     duration = _ffprobe_duration(input_path)
@@ -260,8 +287,33 @@ def overlay_custom_captions(
         "bottom": int(height * 0.78),
     }.get(position, int(height * 0.78))
     highlighted = {word.strip().lower() for word in highlight_words if word.strip()}
-    word_duration = max(duration / max(len(words), 1), 0.1)
     ass_path = output_dir / f"captions_{uuid.uuid4().hex[:12]}.ass"
+
+    normal_color = _ass_color(font_color)
+    hl_color = _ass_color(highlight_color)
+
+    # Group words into phrases (2-4 words each) to prevent overlapping subtitles.
+    # Break at natural punctuation boundaries for cleaner reading.
+    PHRASE_MAX_WORDS = 4
+    PHRASE_MIN_WORDS = 2
+    PHRASE_BREAK_CHARS = {".", "!", "?", ",", ";", ":"}
+    phrases: list[list[str]] = []
+    current: list[str] = []
+    for word in words:
+        current.append(word)
+        ends_with_break = word.rstrip() and word.rstrip()[-1] in PHRASE_BREAK_CHARS
+        if len(current) >= PHRASE_MAX_WORDS or (len(current) >= PHRASE_MIN_WORDS and ends_with_break):
+            phrases.append(current)
+            current = []
+    if current:
+        if phrases and len(current) < PHRASE_MIN_WORDS:
+            phrases[-1].extend(current)
+        else:
+            phrases.append(current)
+
+    phrase_count = max(len(phrases), 1)
+    base_phrase_duration = duration / phrase_count
+    phrase_padding = min(0.06, base_phrase_duration * 0.05)
 
     header = f"""[Script Info]
 ScriptType: v4.00+
@@ -272,24 +324,24 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,Arial,64,{_ass_color("#FFFFFF")},&H000000FF,&H00000000,&H99000000,1,0,0,0,100,100,0,0,1,2,0,5,60,60,60,1
+Style: Default,{resolved_font},{scaled_font_size},{normal_color},&H000000FF,&H00000000,&H99000000,1,0,0,0,100,100,0,0,1,2,0,5,60,60,60,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
     events = []
-    for idx, word in enumerate(words):
-        start = idx * word_duration
-        end = min(duration, start + word_duration)
-        color = (
-            _ass_color("#FFD700")
-            if word.lower().strip(".,!?;:") in highlighted
-            else _ass_color("#FFFFFF")
+    for idx, phrase in enumerate(phrases):
+        start = idx * base_phrase_duration
+        end = min(duration, start + base_phrase_duration + phrase_padding)
+        phrase_text = " ".join(phrase)
+        has_highlight = any(
+            w.lower().strip(".,!?;:") in highlighted for w in phrase
         )
+        color = hl_color if has_highlight else normal_color
         events.append(
             "Dialogue: 0,"
             f"{_ass_timestamp(start)},{_ass_timestamp(end)},Default,,0,0,0,,"
-            f"{{\\pos({width // 2},{y_position})\\c{color}}}{_escape_ass_text(word)}"
+            f"{{\\pos({width // 2},{y_position})\\c{color}}}{_escape_ass_text(phrase_text)}"
         )
 
     try:
