@@ -514,9 +514,16 @@ async def delete_clip(
 
 @router.get("/{task_id}/clips/{clip_id}/file")
 async def get_clip_file(
-    task_id: str, clip_id: str, request: Request, db: AsyncSession = Depends(get_db)
+    task_id: str,
+    clip_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    subtitles: bool = True,
 ):
-    """Serve a clip file after verifying task ownership."""
+    """Serve a clip file after verifying task ownership.
+
+    Set subtitles=false to download the clean (no-caption) variant.
+    """
     try:
         task_service = TaskService(db)
         await _require_task_owner(request, task_service, db, task_id)
@@ -525,13 +532,24 @@ async def get_clip_file(
             raise HTTPException(status_code=404, detail="Clip not found")
 
         clip_path = Path(clip["file_path"])
+
+        # When subtitles=False, try to serve the _clean (no-caption) variant
+        if not subtitles:
+            clean_candidate = clip_path.with_stem(clip_path.stem + "_clean")
+            if clean_candidate.exists():
+                clip_path = clean_candidate
+
         if not clip_path.exists():
             raise HTTPException(status_code=404, detail="Clip file not found")
+
+        download_name = clip["filename"]
+        if not subtitles and clip_path.stem.endswith("_clean"):
+            download_name = clip_path.name
 
         return FileResponse(
             path=str(clip_path),
             media_type="video/mp4",
-            filename=clip["filename"],
+            filename=download_name,
             content_disposition_type="inline",
             headers={"Cache-Control": "private, no-store"},
         )
@@ -772,8 +790,12 @@ async def export_clip(
     request: Request,
     preset: str = "tiktok",
     db: AsyncSession = Depends(get_db),
+    subtitles: bool = True,
 ):
-    """Export clip with a social platform preset."""
+    """Export clip with a social platform preset.
+
+    Set subtitles=false to export the clean (no-caption) variant.
+    """
     try:
         preset_name = preset.lower().strip()
         if preset_name not in EXPORT_PRESETS:
@@ -790,14 +812,23 @@ async def export_clip(
 
         from pathlib import Path
 
+        clip_path = Path(clip["file_path"])
+
+        # When subtitles=False, use the _clean variant as export input
+        if not subtitles:
+            clean_candidate = clip_path.with_stem(clip_path.stem + "_clean")
+            if clean_candidate.exists():
+                clip_path = clean_candidate
+
         runtime_config = get_config()
         output_path = export_with_preset(
-            Path(clip["file_path"]),
+            clip_path,
             Path(runtime_config.temp_dir) / "exports",
             preset_name,
         )
 
-        download_name = f"{Path(clip['filename']).stem}_{preset_name}.mp4"
+        suffix = "_no_captions" if not subtitles else ""
+        download_name = f"{Path(clip['filename']).stem}_{preset_name}{suffix}.mp4"
         return FileResponse(
             path=str(output_path), media_type="video/mp4", filename=download_name
         )

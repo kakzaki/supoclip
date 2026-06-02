@@ -139,6 +139,7 @@ export default function TaskPage() {
   const [captionFontColor, setCaptionFontColor] = useState("#FFFFFF");
   const [captionHighlightColor, setCaptionHighlightColor] = useState("#FFD700");
   const [exportPreset, setExportPreset] = useState("original");
+  const [downloadWithoutCaptions, setDownloadWithoutCaptions] = useState(false);
 
   const [projectFontFamily, setProjectFontFamily] = useState("TikTokSans-Regular");
   const [projectFontSize, setProjectFontSize] = useState("24");
@@ -654,7 +655,8 @@ export default function TaskPage() {
   const handleExportClip = async (clipId: string, fallbackFilename: string) => {
     if (!session?.user?.id || !task?.id) return;
 
-    const response = await fetch(`${taskApiUrl}/${task.id}/clips/${clipId}/export?preset=${exportPreset}`, {
+    const subtitlesParam = downloadWithoutCaptions ? "&subtitles=false" : "";
+    const response = await fetch(`${taskApiUrl}/${task.id}/clips/${clipId}/export?preset=${exportPreset}${subtitlesParam}`, {
       cache: "no-store",
     });
 
@@ -677,8 +679,11 @@ export default function TaskPage() {
   const handleDownloadClip = (clip: Clip) => {
     if (exportPreset === "original") {
       const link = document.createElement("a");
-      link.href = getClipUrl(clip.video_url);
-      link.download = clip.filename;
+      const baseUrl = getClipUrl(clip.video_url);
+      link.href = downloadWithoutCaptions ? `${baseUrl}?subtitles=false` : baseUrl;
+      link.download = downloadWithoutCaptions
+        ? clip.filename.replace(/\.mp4$/i, "_no_captions.mp4")
+        : clip.filename;
       document.body.appendChild(link);
       link.click();
       link.remove();
@@ -1354,6 +1359,16 @@ export default function TaskPage() {
                             </SelectContent>
                           </Select>
                         </div>
+
+                        <label className="inline-flex items-center gap-1.5 h-8 px-2.5 rounded-md border border-input bg-background text-xs text-gray-600 hover:bg-accent transition-colors cursor-pointer select-none">
+                          <input
+                            type="checkbox"
+                            checked={downloadWithoutCaptions}
+                            onChange={(e) => setDownloadWithoutCaptions(e.target.checked)}
+                            className="rounded"
+                          />
+                          No captions
+                        </label>
 
                         <Button
                           size="sm"
