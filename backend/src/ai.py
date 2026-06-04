@@ -2,13 +2,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Literal
 import asyncio
+import json
 import logging
 import re
 
 from pydantic_ai import Agent
 from pydantic_ai.models import Model
 from pydantic_ai.models.ollama import OllamaModel
+from pydantic_ai.models.openai import OpenAIModel
 from pydantic_ai.providers.ollama import OllamaProvider
+from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic import AliasChoices, BaseModel, Field, field_validator
 
 from .config import Config, get_config
@@ -484,8 +487,71 @@ def _get_missing_llm_key_error(model_name: str, runtime_config: Config) -> Optio
     return None
 
 
+def _inline_json_schema_refs(schema: dict) -> dict:
+    """Recursively inline all ``$ref`` references in a JSON Schema.
+
+    DeepSeek (and some other OpenAI-compatible providers) do not support
+    ``$ref`` / ``$defs`` inside function-calling parameter schemas.  When a
+    model like ``TranscriptAnalysis`` contains nested models (e.g.
+    ``TranscriptSegment.virality`` → ``ViralityAnalysis``), pydantic-ai
+    generates a schema with ``$ref`` entries that DeepSeek silently rejects
+    by returning an empty ``{}`` tool-call argument.
+
+    This helper fully resolves every ``$ref`` against its corresponding
+    ``$defs`` entry, producing a flat, self-contained schema with zero
+    references.
+    """
+    defs = schema.get("$defs", {})
+
+    def _walk(node):
+        if isinstance(node, dict):
+            if "$ref" in node:
+                ref = node["$ref"]
+                if ref.startswith("#/$defs/") and not node.keys() - {"$ref"}:
+                    # Pure reference — fully replace with inlined definition.
+                    key = ref[len("#/$defs/"):]
+                    if key in defs:
+                        return _walk(json.loads(json.dumps(defs[key])))
+                elif ref.startswith("#/$defs/"):
+                    # Reference with sibling keys (e.g. description) —
+                    # inline the definition and merge siblings on top.
+                    key = ref[len("#/$defs/"):]
+                    if key in defs:
+                        resolved = json.loads(json.dumps(defs[key]))
+                        siblings = {k: v for k, v in node.items() if k != "$ref"}
+                        merged = _walk(resolved)
+                        merged.update(siblings)
+                        return merged
+                return node
+            return {k: _walk(v) for k, v in node.items()}
+        elif isinstance(node, list):
+            return [_walk(item) for item in node]
+        return node
+
+    return _walk(json.loads(json.dumps(schema)))
+
+
 def _build_transcript_model(runtime_config: Config) -> Model | str:
     provider, provider_model_name = _split_llm_name(runtime_config.llm)
+
+    # DeepSeek API is OpenAI-compatible but pydantic-ai has no native
+    # DeepSeek provider.  Build an OpenAIModel pointed at api.deepseek.com
+    # so tool calling (and therefore structured output) works correctly.
+    if provider == "deepseek":
+        if not runtime_config.deepseek_api_key:
+            raise RuntimeError(
+                "DeepSeek LLM selected but DEEPSEEK_API_KEY is not set. "
+                "Set DEEPSEEK_API_KEY or choose another provider "
+                "(google-gla:*, openai:*, anthropic:*, etc.)."
+            )
+        return OpenAIModel(
+            provider_model_name or "deepseek-chat",
+            provider=OpenAIProvider(
+                base_url="https://api.deepseek.com",
+                api_key=runtime_config.deepseek_api_key,
+            ),
+        )
+
     if provider != "ollama":
         return runtime_config.llm
 
@@ -979,6 +1045,88 @@ def _filter_segment_diversity(
     return kept
 
 
+async def _run_deepseek_analysis(
+    transcript: str,
+    include_broll: bool = False,
+    clip_signals: str | None = None,
+    duration_config: Optional[ClipDurationConfig] = None,
+) -> TranscriptAnalysis:
+    """Run transcript analysis on DeepSeek using plain JSON mode.
+
+    DeepSeek's API does not support ``$ref`` / ``$defs`` inside function-calling
+    parameter schemas, so the normal ``output_type=TranscriptAnalysis`` path
+    silently fails (the model returns ``{}`` for every tool call).
+
+    Instead we build an agent that returns raw text, embed the expected JSON
+    output format directly in the system prompt, and parse + validate the
+    response ourselves.
+    """
+    from pydantic import TypeAdapter
+
+    runtime_config = get_config()
+    dc = duration_config or ClipDurationConfig.from_preset("medium")
+
+    # Build an inlined, $ref-free version of the output schema
+    full_schema = TranscriptAnalysis.model_json_schema()
+    flat_schema = _inline_json_schema_refs(full_schema)
+    schema_json = json.dumps(flat_schema, indent=2)
+
+    system_prompt = _build_transcript_analysis_system_prompt(dc)
+    system_prompt += (
+        "\n\n## Output format (MANDATORY)\n"
+        "You MUST respond with ONLY a single JSON object — no markdown, no "
+        "code fences, no explanatory text. The JSON must conform to this "
+        "schema:\n"
+        f"```json\n{schema_json}\n```\n"
+        "If the transcript is empty or has no usable segments, return:\n"
+        '{"most_relevant_segments": [], "summary": "No usable segments found.", '
+        '"key_topics": []}\n'
+    )
+
+    agent: Agent[None, str] = Agent(
+        model=_build_transcript_model(runtime_config),
+        system_prompt=system_prompt,
+    )
+
+    prompt = build_transcript_analysis_prompt(
+        transcript=transcript,
+        include_broll=include_broll,
+        clip_signals=clip_signals,
+        duration_config=dc,
+    )
+    # Reinforce JSON-only at the end of the user prompt as well.
+    prompt += (
+        "\n\nIMPORTANT: Reply with ONLY the JSON object. No other text."
+    )
+
+    result = await agent.run(prompt)
+    raw = (result.output or "").strip()
+
+    # Strip markdown code fences if the model wrapped the JSON
+    if raw.startswith("```"):
+        raw = re.sub(r"^```(?:json)?\s*", "", raw)
+        raw = re.sub(r"\s*```$", "", raw)
+        raw = raw.strip()
+
+    # Parse and validate against the original (non-inlined) model
+    try:
+        ta = TypeAdapter(TranscriptAnalysis)
+        analysis: TranscriptAnalysis = ta.validate_json(raw)
+        logger.info(
+            "DeepSeek JSON analysis parsed successfully: %d segments",
+            len(analysis.most_relevant_segments),
+        )
+        return analysis
+    except Exception as parse_err:
+        logger.error(
+            "DeepSeek returned unparseable JSON. Raw (first 500 chars): %s",
+            raw[:500],
+        )
+        raise RuntimeError(
+            f"DeepSeek analysis returned invalid JSON: {parse_err}"
+        ) from parse_err
+
+
 async def get_most_relevant_parts_by_transcript(
     transcript: str,
     include_broll: bool = False,
@@ -999,19 +1147,32 @@ async def get_most_relevant_parts_by_transcript(
     )
 
     try:
-        agent = get_transcript_agent(duration_config=dc)
+        runtime_config = get_config()
+        provider, _ = _split_llm_name(runtime_config.llm)
         truncated = _truncate_transcript(transcript)
 
-        result = await agent.run(
-            build_transcript_analysis_prompt(
+        if provider == "deepseek":
+            # DeepSeek does not support nested $ref in function-calling parameter
+            # schemas, so pydantic-ai output_type silently fails (model returns
+            # empty {} tool arguments).  Fall back to a plain text agent with
+            # explicit JSON-format instructions and parse the result ourselves.
+            analysis = await _run_deepseek_analysis(
                 transcript=truncated,
                 include_broll=include_broll,
                 clip_signals=clip_signals,
                 duration_config=dc,
             )
-        )
-
-        analysis = result.output
+        else:
+            agent = get_transcript_agent(duration_config=dc)
+            result = await agent.run(
+                build_transcript_analysis_prompt(
+                    transcript=truncated,
+                    include_broll=include_broll,
+                    clip_signals=clip_signals,
+                    duration_config=dc,
+                )
+            )
+            analysis = result.output
         logger.info(
             f"AI analysis found {len(analysis.most_relevant_segments)} segments"
         )
