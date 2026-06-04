@@ -111,6 +111,7 @@ def _merge_task_source_metadata(
     output_format: Any = None,
     add_subtitles: Any = None,
     cleanup_settings: Dict[str, Any] | None = None,
+    clip_duration: Any = None,
 ) -> Dict[str, Any]:
     merged = dict(existing or {})
 
@@ -122,6 +123,8 @@ def _merge_task_source_metadata(
         merged["output_format"] = output_format
     if isinstance(add_subtitles, bool):
         merged["add_subtitles"] = add_subtitles
+    if isinstance(clip_duration, str) and clip_duration:
+        merged["clip_duration"] = clip_duration
     if cleanup_settings:
         merged.update(cleanup_settings)
 
@@ -196,6 +199,9 @@ async def create_task(request: Request, db: AsyncSession = Depends(get_db)):
     add_subtitles = data.get("add_subtitles", True)
     if not isinstance(add_subtitles, bool):
         add_subtitles = True
+    clip_duration = data.get("clip_duration")  # "short" | "medium" | "long" | "45" (raw seconds)
+    if clip_duration is not None and not isinstance(clip_duration, str):
+        clip_duration = None
     cleanup_settings = normalize_clip_cleanup_settings(
         data.get("cut_long_pauses"),
         data.get("pause_threshold_ms"),
@@ -246,6 +252,7 @@ async def create_task(request: Request, db: AsyncSession = Depends(get_db)):
             output_format,
             add_subtitles,
             cleanup_settings,
+            clip_duration=clip_duration,
         )
 
         # Save source metadata for resume/retries in environments without sources.url column
@@ -258,6 +265,7 @@ async def create_task(request: Request, db: AsyncSession = Depends(get_db)):
                 output_format=output_format,
                 add_subtitles=add_subtitles,
                 cleanup_settings=cleanup_settings,
+                clip_duration=clip_duration,
             ),
         )
 
@@ -975,6 +983,7 @@ async def resume_task(
             output_format,
             add_subtitles,
             cleanup_settings,
+            clip_duration=metadata.get("clip_duration"),
         )
 
         return {"message": "Task resumed", "job_id": job_id}

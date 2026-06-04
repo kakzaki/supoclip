@@ -1,7 +1,4 @@
-"""
-AI-related functions for transcript analysis with enhanced precision and virality scoring.
-"""
-
+from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Literal
 import asyncio
@@ -19,10 +16,66 @@ from .runtime_settings import apply_settings_to_process_env
 
 logger = logging.getLogger(__name__)
 
-IDEAL_CLIP_MIN_SECONDS = 25
-IDEAL_CLIP_MAX_SECONDS = 50
-MIN_ACCEPTED_CLIP_SECONDS = 15
-MAX_ACCEPTED_CLIP_SECONDS = 60
+# ── Clip duration presets ────────────────────────────────────────────
+# These map user-friendly names (or raw second values) to the internal
+# min/ideal/max bounds used by the LLM system prompt and the validation
+# / repair logic.
+
+
+@dataclass(frozen=True)
+class ClipDurationConfig:
+    min_seconds: int   # hard floor — segments shorter than this are rejected
+    ideal_min: int     # soft floor — the LLM is told to prefer above this
+    ideal_max: int     # soft ceiling
+    max_seconds: int   # hard ceiling
+    max_clips: int     # max number of segments to request from the LLM
+
+    @classmethod
+    def from_preset(cls, preset: str, max_clips: int = 5) -> "ClipDurationConfig":
+        """Resolve a preset name or a raw-seconds string like ``"45"``."""
+        preset = preset.strip().lower()
+        if preset in DURATION_PRESETS:
+            return DURATION_PRESETS[preset].with_max_clips(max_clips)
+        # Allow raw seconds: "30" → short, "60" → medium, etc.
+        try:
+            target = int(preset)
+        except ValueError:
+            return DURATION_PRESETS["medium"].with_max_clips(max_clips)
+        if target <= 20:
+            return DURATION_PRESETS["short"].with_max_clips(max_clips)
+        if target <= 40:
+            return DURATION_PRESETS["medium"].with_max_clips(max_clips)
+        return DURATION_PRESETS["long"].with_max_clips(max_clips)
+
+    def with_max_clips(self, max_clips: int) -> "ClipDurationConfig":
+        return ClipDurationConfig(
+            min_seconds=self.min_seconds,
+            ideal_min=self.ideal_min,
+            ideal_max=self.ideal_max,
+            max_seconds=self.max_seconds,
+            max_clips=max_clips,
+        )
+
+
+DURATION_PRESETS: dict[str, ClipDurationConfig] = {
+    "short": ClipDurationConfig(
+        min_seconds=10, ideal_min=15, ideal_max=30, max_seconds=35, max_clips=5,
+    ),
+    "medium": ClipDurationConfig(
+        min_seconds=20, ideal_min=25, ideal_max=50, max_seconds=60, max_clips=5,
+    ),
+    "long": ClipDurationConfig(
+        min_seconds=30, ideal_min=45, ideal_max=90, max_seconds=120, max_clips=5,
+    ),
+}
+
+# Default (backward-compatible with old hardcoded constants).
+_dc = DURATION_PRESETS["medium"]
+IDEAL_CLIP_MIN_SECONDS = _dc.ideal_min
+IDEAL_CLIP_MAX_SECONDS = _dc.ideal_max
+MIN_ACCEPTED_CLIP_SECONDS = _dc.min_seconds
+MAX_ACCEPTED_CLIP_SECONDS = _dc.max_seconds
+
 TRANSCRIPT_ANALYSIS_CACHE_VERSION = "longer-clips-v3-duration-repair"
 TRANSCRIPT_SPAN_RE = re.compile(
     r"^\[(?P<start>\d{1,2}:\d{2}(?::\d{2})?)\s*-\s*"
@@ -167,8 +220,37 @@ class TranscriptAnalysis(BaseModel):
     )
 
 
-# Enhanced system prompt with virality scoring and B-roll detection
-transcript_analysis_system_prompt = """You are an expert transcript analyst for short-form video editing.
+def _build_duration_section(dc: ClipDurationConfig) -> str:
+    """Build the TIMING GUIDELINES + TIMESTAMP REQUIREMENTS sections dynamically."""
+    return f"""TIMING GUIDELINES:
+- Target {dc.ideal_min}-{dc.ideal_max} seconds for most clips
+- Use {dc.min_seconds}-{dc.ideal_min - 1} seconds only when the moment is exceptionally dense, self-contained, and complete
+- CRITICAL: start_time MUST be different from end_time (minimum {dc.min_seconds} seconds apart)
+- Focus on natural content boundaries rather than arbitrary time limits
+- Include enough context for the segment to be understandable
+- Prefer roughly {dc.ideal_min}-{dc.ideal_max} seconds when possible
+- Start at the hook or the minimum setup needed to make the hook land, and end after the payoff
+- If a highlight is only one good line, expand to include the surrounding setup and payoff rather than returning a tiny fragment
+- Stop expanding when the topic drifts, the speaker repeats the same point, or the clip loses momentum
+
+TIMESTAMP REQUIREMENTS - EXTREMELY IMPORTANT:
+- Use EXACT timestamps as they appear in the transcript
+- Never modify timestamp format (keep MM:SS structure)
+- start_time MUST be LESS THAN end_time (start_time < end_time)
+- MINIMUM segment duration: {dc.min_seconds} seconds (end_time - start_time >= {dc.min_seconds} seconds)
+- IDEAL segment duration: {dc.ideal_min}-{dc.ideal_max} seconds
+- MAXIMUM segment duration: {dc.max_seconds} seconds
+- Look at transcript ranges like [02:25 - 02:35] and use different start/end times
+- NEVER use the same timestamp for both start_time and end_time
+- Example: start_time: "02:25", end_time: "02:35" (NOT "02:25" and "02:25")"""
+
+
+def _build_transcript_analysis_system_prompt(dc: ClipDurationConfig) -> str:
+    """Build the system prompt with duration-specific timing instructions."""
+    duration_section = _build_duration_section(dc)
+    clip_count = f"Choose {dc.max_clips - 2}-{dc.max_clips} segments total" if dc.max_clips > 3 else f"Choose 2-{dc.max_clips} segments total"
+
+    return f"""You are an expert transcript analyst for short-form video editing.
 
 Your job is extraction and ranking, not creative rewriting. You must stay fully grounded in the transcript and choose the best clip candidates that already exist in the source material.
 
@@ -179,7 +261,7 @@ OUTPUT CONTRACT:
 - Each item in "most_relevant_segments" must include: "start_time", "end_time", "text", "relevance_score", "reasoning", and "virality".
 - Do not use "segment" as an output field. Use "text".
 - "virality" must include: "hook_score", "engagement_score", "value_score", "shareability_score", "total_score", "hook_type", and "virality_reasoning".
-- Every returned segment must be 15-60 seconds long. Prefer 25-50 seconds.
+- Every returned segment must be {dc.min_seconds}-{dc.max_seconds} seconds long. Prefer {dc.ideal_min}-{dc.ideal_max} seconds.
 
 CORE OBJECTIVES:
 1. Identify segments that would be compelling on social media platforms
@@ -262,26 +344,7 @@ Identify 2-4 moments in each segment where B-roll footage could enhance the vide
 - At emotional peaks that could use supporting imagery
 - Use simple, searchable keywords (e.g., "coffee shop", "laptop coding", "money stack")
 
-TIMING GUIDELINES:
-- Target 25-50 seconds for most clips
-- Use 15-24 seconds only when the moment is exceptionally dense, self-contained, and complete
-- CRITICAL: start_time MUST be different from end_time (minimum 15 seconds apart)
-- Focus on natural content boundaries rather than arbitrary time limits
-- Include enough context for the segment to be understandable
-- Prefer roughly 30-50 seconds when possible
-- Start at the hook or the minimum setup needed to make the hook land, and end after the payoff
-- If a highlight is only one good line, expand to include the surrounding setup and payoff rather than returning a tiny fragment
-- Stop expanding when the topic drifts, the speaker repeats the same point, or the clip loses momentum
-
-TIMESTAMP REQUIREMENTS - EXTREMELY IMPORTANT:
-- Use EXACT timestamps as they appear in the transcript
-- Never modify timestamp format (keep MM:SS structure)
-- start_time MUST be LESS THAN end_time (start_time < end_time)
-- MINIMUM segment duration: 15 seconds (end_time - start_time >= 15 seconds)
-- IDEAL segment duration: 25-50 seconds
-- Look at transcript ranges like [02:25 - 02:35] and use different start/end times
-- NEVER use the same timestamp for both start_time and end_time
-- Example: start_time: "02:25", end_time: "02:35" (NOT "02:25" and "02:25")
+{duration_section}
 
 SCORING AND OUTPUT RULES:
 - relevance_score should reflect how well the segment works as a standalone short clip, not just whether the topic is generally important
@@ -289,7 +352,7 @@ SCORING AND OUTPUT RULES:
 - virality_reasoning and reasoning should cite what is actually present in the chosen span
 - summary and key_topics must also stay grounded in the transcript and should not add outside interpretation
 
-Find 2-5 compelling segments that would work well as standalone clips. Quality over quantity: choose fewer stronger segments over filling a quota. Every selected segment must be accurate, self-contained, have proper time ranges, and score high on virality metrics."""
+{clip_count}. Quality over quantity: choose fewer stronger segments over filling a quota. Every selected segment must be accurate, self-contained, have proper time ranges, and score high on virality metrics."""
 
 # Lazy-loaded agent to avoid import-time failures when API keys aren't set
 _transcript_agent: Optional[Agent[None, TranscriptAnalysis]] = None
@@ -380,11 +443,19 @@ def _build_transcript_model(runtime_config: Config) -> Model | str:
     )
 
 
-def get_transcript_agent() -> Agent[None, TranscriptAnalysis]:
-    """Get or create the transcript analysis agent (lazy initialization)."""
+def get_transcript_agent(
+    duration_config: Optional[ClipDurationConfig] = None,
+) -> Agent[None, TranscriptAnalysis]:
+    """Get or create the transcript analysis agent (lazy initialization).
+
+    When *duration_config* is provided and differs from the previously cached
+    config, the agent is rebuilt with updated timing instructions so the LLM
+    respects the user's clip-duration preference.
+    """
     global _transcript_agent, _transcript_agent_signature
     runtime_config = get_config()
     provider, _ = _split_llm_name(runtime_config.llm)
+    dc = duration_config or ClipDurationConfig.from_preset("medium")
     signature = (
         runtime_config.llm,
         runtime_config.openai_api_key,
@@ -394,6 +465,10 @@ def get_transcript_agent() -> Agent[None, TranscriptAnalysis]:
         runtime_config.deepseek_api_key,
         runtime_config.ollama_base_url,
         runtime_config.ollama_api_key,
+        dc.min_seconds,
+        dc.ideal_min,
+        dc.ideal_max,
+        dc.max_seconds,
     )
     if _transcript_agent is None or _transcript_agent_signature != signature:
         apply_settings_to_process_env(runtime_config.as_runtime_settings())
@@ -404,7 +479,7 @@ def get_transcript_agent() -> Agent[None, TranscriptAnalysis]:
         _transcript_agent = Agent[None, TranscriptAnalysis](
             model=_build_transcript_model(runtime_config),
             output_type=TranscriptAnalysis,
-            system_prompt=transcript_analysis_system_prompt,
+            system_prompt=_build_transcript_analysis_system_prompt(dc),
             # Some local Ollama/OpenAI-compatible endpoints can return formatted
             # prose before settling on schema-valid JSON. Keep retries limited
             # while still allowing enough repair attempts for local models.
@@ -415,9 +490,13 @@ def get_transcript_agent() -> Agent[None, TranscriptAnalysis]:
 
 
 def build_transcript_analysis_prompt(
-    transcript: str, include_broll: bool = False, clip_signals: str | None = None
+    transcript: str,
+    include_broll: bool = False,
+    clip_signals: str | None = None,
+    duration_config: Optional[ClipDurationConfig] = None,
 ) -> str:
     """Build the grounded task prompt for transcript analysis."""
+    dc = duration_config or ClipDurationConfig.from_preset("medium")
     broll_instruction = ""
     if include_broll:
         broll_instruction = (
@@ -432,6 +511,8 @@ def build_transcript_analysis_prompt(
             "must still be a coherent contiguous transcript range."
         )
 
+    clip_count = f"Choose {dc.max_clips - 2}-{dc.max_clips} segments total" if dc.max_clips > 3 else f"Choose 2-{dc.max_clips} segments total"
+
     return f"""Analyze this video transcript and identify the most engaging segments for short-form content.
 
 The transcript is formatted as one line per timestamped span, for example:
@@ -445,10 +526,10 @@ Follow this workflow:
 4. For each chosen segment, use the earliest timestamp in the selected range as start_time and the latest timestamp in the selected range as end_time.{broll_instruction}
 
 Selection target:
-- Choose 2-5 segments total.
-- Most selected clips should be 25-50 seconds.
-- Only choose a 15-24 second clip when it already contains a full setup and payoff.
-- If a strong moment is shorter than 25 seconds, first try expanding to nearby contiguous transcript lines that add useful context.
+- {clip_count}.
+- Most selected clips should be {dc.ideal_min}-{dc.ideal_max} seconds.
+- Only choose a {dc.min_seconds}-{dc.ideal_min - 1} second clip when it already contains a full setup and payoff.
+- If a strong moment is shorter than {dc.ideal_min} seconds, first try expanding to nearby contiguous transcript lines that add useful context.
 - Skip weak standalone picks: intros, sponsor reads, CTAs, contextless quotes, repeated points, vague setup, and answer fragments that require prior context.
 - Before returning a segment, ask whether a viewer would understand and care without seeing the rest of the source video.
 
@@ -468,7 +549,7 @@ JSON-only output requirements:
 - Top-level keys: "most_relevant_segments", "summary", "key_topics"{', "broll_opportunities"' if include_broll else ''}.
 - Segment keys: "start_time", "end_time", "text", "relevance_score", "reasoning", "virality".
 - Virality keys: "hook_score", "engagement_score", "value_score", "shareability_score", "total_score", "hook_type", "virality_reasoning".
-- Do not return segments shorter than {MIN_ACCEPTED_CLIP_SECONDS} seconds or longer than {MAX_ACCEPTED_CLIP_SECONDS} seconds.
+- Do not return segments shorter than {dc.min_seconds} seconds or longer than {dc.max_seconds} seconds.
 
 Transcript:
 {transcript}"""
@@ -838,15 +919,26 @@ def _filter_segment_diversity(
 
 
 async def get_most_relevant_parts_by_transcript(
-    transcript: str, include_broll: bool = False, clip_signals: str | None = None
+    transcript: str,
+    include_broll: bool = False,
+    clip_signals: str | None = None,
+    duration_config: Optional[ClipDurationConfig] = None,
 ) -> TranscriptAnalysis:
-    """Get the most relevant parts of a transcript with virality scoring and optional B-roll detection."""
+    """Get the most relevant parts of a transcript with virality scoring and optional B-roll detection.
+
+    *duration_config* controls the target clip length and maximum number of
+    clips the LLM should select. Pass ``ClipDurationConfig.from_preset("short")``
+    for TikTok-style 15-30s clips, ``"medium"`` for 25-50s (default), or
+    ``"long"`` for 45-90s podcast-style clips.
+    """
+    dc = duration_config or ClipDurationConfig.from_preset("medium")
     logger.info(
-        f"Starting AI analysis of transcript ({len(transcript)} chars), include_broll={include_broll}"
+        f"Starting AI analysis of transcript ({len(transcript)} chars), "
+        f"include_broll={include_broll}, duration={dc.ideal_min}-{dc.ideal_max}s"
     )
 
     try:
-        agent = get_transcript_agent()
+        agent = get_transcript_agent(duration_config=dc)
         truncated = _truncate_transcript(transcript)
 
         result = await agent.run(
@@ -854,6 +946,7 @@ async def get_most_relevant_parts_by_transcript(
                 transcript=truncated,
                 include_broll=include_broll,
                 clip_signals=clip_signals,
+                duration_config=dc,
             )
         )
 
@@ -889,7 +982,7 @@ async def get_most_relevant_parts_by_transcript(
 
                 duration = end_seconds - start_seconds
 
-                if duration < MIN_ACCEPTED_CLIP_SECONDS or duration > MAX_ACCEPTED_CLIP_SECONDS:
+                if duration < dc.min_seconds or duration > dc.max_seconds:
                     repaired_bounds = _repair_segment_bounds(
                         segment,
                         transcript_spans,
@@ -906,15 +999,15 @@ async def get_most_relevant_parts_by_transcript(
                     )
                     continue
 
-                if duration < MIN_ACCEPTED_CLIP_SECONDS:
+                if duration < dc.min_seconds:
                     logger.warning(
-                        f"Skipping segment too short: {duration}s (min {MIN_ACCEPTED_CLIP_SECONDS}s required)"
+                        f"Skipping segment too short: {duration}s (min {dc.min_seconds}s required)"
                     )
                     continue
 
-                if duration > MAX_ACCEPTED_CLIP_SECONDS:
+                if duration > dc.max_seconds:
                     logger.warning(
-                        f"Skipping segment too long: {duration}s (max {MAX_ACCEPTED_CLIP_SECONDS}s allowed)"
+                        f"Skipping segment too long: {duration}s (max {dc.max_seconds}s allowed)"
                     )
                     continue
 

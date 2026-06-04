@@ -18,7 +18,7 @@ import { track } from "@/lib/datafast";
 import { formatSupportMessage, parseApiError } from "@/lib/api-error";
 import Link from "next/link";
 import Image from "next/image";
-import { ArrowRight, Youtube, CheckCircle, AlertCircle, Loader2, Palette, Type, Paintbrush, Film, Sparkles, Upload, Monitor, Menu, X, LogOut, List, Shield, Settings } from "lucide-react";
+import { ArrowRight, Youtube, CheckCircle, AlertCircle, Loader2, Palette, Type, Paintbrush, Film, Sparkles, Upload, Monitor, Menu, X, LogOut, List, Shield, Settings, Clock } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import LandingPage from "@/components/landing-page";
 import { isLandingOnlyModeEnabled } from "@/lib/app-flags";
@@ -125,6 +125,7 @@ export default function Home() {
   const [pauseThresholdMs, setPauseThresholdMs] = useState("900");
   const [removeFillerWords, setRemoveFillerWords] = useState(false);
   const [filteredWords, setFilteredWords] = useState("");
+  const [clipDuration, setClipDuration] = useState("medium"); // "short" | "medium" | "long"
 
   // Latest task state
   const [latestTask, setLatestTask] = useState<LatestTask | null>(null);
@@ -474,6 +475,7 @@ export default function Home() {
           pause_threshold_ms: normalizedPauseThreshold,
           remove_filler_words: removeFillerWords,
           filtered_words: normalizedFilteredWords,
+          clip_duration: clipDuration,
         }),
       });
 
@@ -988,6 +990,42 @@ export default function Home() {
                         <SelectItem value="original">Original</SelectItem>
                       </SelectContent>
                     </Select>
+                  </div>
+
+                  {/* Clip Duration */}
+                  <div className="flex items-center justify-between gap-4 p-3 border rounded-lg bg-stone-50">
+                    <div className="flex min-w-0 items-center gap-3">
+                      <Clock className="w-4 h-4 text-amber-500" />
+                      <div>
+                        <h3 className="text-sm font-medium text-stone-900">Clip duration</h3>
+                        <p className="text-xs text-stone-500">
+                          {clipDuration === "short" && "TikTok-style · 15–30 seconds"}
+                          {clipDuration === "medium" && "Balanced · 25–50 seconds"}
+                          {clipDuration === "long" && "Podcast-style · 45–90 seconds"}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex rounded-md border bg-white p-0.5 gap-0.5">
+                      {([
+                        ["short", "Short"],
+                        ["medium", "Medium"],
+                        ["long", "Long"],
+                      ] as const).map(([value, label]) => (
+                        <button
+                          key={value}
+                          type="button"
+                          disabled={generationControlsDisabled}
+                          onClick={() => setClipDuration(value)}
+                          className={`px-3 py-1.5 text-xs font-medium rounded-sm transition-colors ${
+                            clipDuration === value
+                              ? "bg-stone-900 text-white"
+                              : "text-stone-600 hover:text-stone-900 hover:bg-stone-100"
+                          }`}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
                   </div>
 
                   {/* Add subtitles */}

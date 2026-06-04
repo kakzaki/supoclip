@@ -113,15 +113,29 @@ class VideoService:
         return transcript
 
     @staticmethod
-    async def analyze_transcript(transcript: str, clip_signals: Optional[str] = None) -> Any:
+    async def analyze_transcript(
+        transcript: str,
+        clip_signals: Optional[str] = None,
+        clip_duration: Optional[str] = None,
+    ) -> Any:
         """
         Analyze transcript with AI to find relevant segments.
         This is already async, no need to wrap.
+
+        *clip_duration* can be a preset name ("short", "medium", "long")
+        or a raw target seconds value (e.g., "45").
         """
-        logger.info("Starting AI analysis of transcript")
+        from ..ai import ClipDurationConfig
+
+        dc = ClipDurationConfig.from_preset(clip_duration or "medium")
+        logger.info(
+            "Starting AI analysis of transcript, duration=%s-%ss",
+            dc.ideal_min, dc.ideal_max,
+        )
         relevant_parts = await get_most_relevant_parts_by_transcript(
             transcript,
             clip_signals=clip_signals,
+            duration_config=dc,
         )
         logger.info(
             f"AI analysis complete: {len(relevant_parts.most_relevant_segments)} segments found"
@@ -341,6 +355,7 @@ class VideoService:
         cached_analysis_json: Optional[str] = None,
         progress_callback: Optional[Callable[[int, str, str], Awaitable[None]]] = None,
         should_cancel: Optional[Callable[[], Awaitable[bool]]] = None,
+        clip_duration: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Complete video processing pipeline.
@@ -467,6 +482,7 @@ class VideoService:
                 relevant_parts = await VideoService.analyze_transcript(
                     transcript,
                     clip_signals=clip_signals,
+                    clip_duration=clip_duration,
                 )
 
             # Step 4: Create clips
