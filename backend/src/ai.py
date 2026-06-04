@@ -636,33 +636,205 @@ def _should_limit_transcript_tokens() -> bool:
 
 
 def _truncate_transcript(transcript: str) -> str:
-    """Truncate long transcripts to stay within low TPM provider limits."""
+    """Truncate long transcripts to stay within low TPM provider limits.
+
+    Uses stratified sampling across the full video timeline instead of
+    cutting from the top, so the LLM sees content from the beginning,
+    middle, and end rather than only the first few minutes.
+    """
     if not _should_limit_transcript_tokens():
         return transcript
 
     if len(transcript) <= _MAX_TRANSCRIPT_CHARS_FOR_LOW_TPM:
         return transcript
 
-    # Keep lines that fit within the limit; prefer contiguous lines from the top.
     lines = transcript.splitlines()
-    truncated_lines: list[str] = []
-    total = 0
-    for line in lines:
-        if total + len(line) > _MAX_TRANSCRIPT_CHARS_FOR_LOW_TPM:
-            break
-        truncated_lines.append(line)
-        total += len(line) + 1  # +1 for newline
+    if not lines:
+        return transcript
 
-    if not truncated_lines:
-        # Edge case: first line alone exceeds the limit; take a raw slice.
+    # Edge case: first line alone exceeds the limit; take a raw slice.
+    if len(lines[0]) > _MAX_TRANSCRIPT_CHARS_FOR_LOW_TPM:
         return transcript[:_MAX_TRANSCRIPT_CHARS_FOR_LOW_TPM]
 
-    logger.warning(
-        "Transcript truncated from %d to %d chars to fit provider TPM limits.",
-        len(transcript),
-        total,
+    # Parse timestamps so we can stratify by time rather than by line count.
+    parsed: list[dict[str, Any]] = []
+    for line in lines:
+        match = TRANSCRIPT_SPAN_RE.match(line.strip())
+        if match:
+            try:
+                parsed.append({
+                    "line": line,
+                    "start_s": _parse_transcript_timestamp_seconds(match.group("start")),
+                })
+                continue
+            except ValueError:
+                pass
+        parsed.append({"line": line, "start_s": None})
+
+    if not parsed:
+        return transcript
+
+    # Find the time range so we can create equal-duration strata.
+    timestamps = [p["start_s"] for p in parsed if p["start_s"] is not None]
+    if not timestamps:
+        # No parseable timestamps; uniform sample by line index.
+        step = max(1, len(lines) // max(1, _MAX_TRANSCRIPT_CHARS_FOR_LOW_TPM // 80))
+        sampled: list[str] = []
+        total = 0
+        for i in range(0, len(lines), step):
+            if total + len(lines[i]) > _MAX_TRANSCRIPT_CHARS_FOR_LOW_TPM:
+                break
+            sampled.append(lines[i])
+            total += len(lines[i]) + 1
+        if not sampled:
+            return transcript[:_MAX_TRANSCRIPT_CHARS_FOR_LOW_TPM]
+        logger.warning(
+            "Transcript sampled uniformly from %d to %d chars (%d/%d lines).",
+            len(transcript),
+            total,
+            len(sampled),
+            len(lines),
+        )
+        return "\n".join(sampled)
+
+    min_time, max_time = min(timestamps), max(timestamps)
+    total_duration = max(1.0, max_time - min_time)
+
+    # Create 6 equal-duration strata and pick lines proportionally from each.
+    num_strata = 6
+    stratum_budget = _MAX_TRANSCRIPT_CHARS_FOR_LOW_TPM // num_strata
+    stratum_lines: dict[int, list[str]] = {s: [] for s in range(num_strata)}
+
+    for entry in parsed:
+        if entry["start_s"] is not None:
+            fraction = (entry["start_s"] - min_time) / total_duration
+            stratum = min(num_strata - 1, int(fraction * num_strata))
+        else:
+            stratum = 0
+        line_len = len(entry["line"]) + 1
+        current_total = sum(len(l) + 1 for l in stratum_lines[stratum])
+        if current_total + line_len <= stratum_budget:
+            stratum_lines[stratum].append(entry["line"])
+
+    # Assemble in stratum order so the LLM sees a chronological summary.
+    truncated_lines: list[str] = []
+    total = 0
+    for s in range(num_strata):
+        for line in stratum_lines[s]:
+            if total + len(line) > _MAX_TRANSCRIPT_CHARS_FOR_LOW_TPM:
+                break
+            truncated_lines.append(line)
+            total += len(line) + 1
+
+    if not truncated_lines:
+        return transcript[:_MAX_TRANSCRIPT_CHARS_FOR_LOW_TPM]
+
+    # Add a visible stratum marker so the LLM knows it's seeing a time-stratified sample.
+    header = (
+        f"[Note: transcript truncated from {len(transcript)} chars to fit limits. "
+        f"Lines are sampled proportionally from {num_strata} time strata across "
+        f"{int(total_duration // 60)}m{int(total_duration % 60)}s of content.]"
     )
-    return "\n".join(truncated_lines)
+    logger.warning(
+        "Transcript stratified from %d to %d chars across %d strata.",
+        len(transcript),
+        total + len(header),
+        num_strata,
+    )
+    return header + "\n" + "\n".join(truncated_lines)
+
+
+def _filter_segment_diversity(
+    segments: list[TranscriptSegment],
+    min_time_gap_fraction: float = 0.08,
+    min_text_jaccard: float = 0.45,
+) -> list[TranscriptSegment]:
+    """Remove segments that are too close in time or too similar in text.
+
+    When two segments overlap in time by more than *min_time_gap_fraction*
+    of the source duration, or share more than *min_text_jaccard* fraction
+    of unique words, the lower-scoring one is dropped.
+
+    Segments are assumed to be pre-sorted by score (best first).
+    """
+    if len(segments) <= 1:
+        return segments
+
+    # Compute the total time span of all segments to scale the gap threshold.
+    all_starts: list[int] = []
+    all_ends: list[int] = []
+    for seg in segments:
+        try:
+            all_starts.append(_parse_transcript_timestamp_seconds(seg.start_time))
+            all_ends.append(_parse_transcript_timestamp_seconds(seg.end_time))
+        except ValueError:
+            continue
+    source_span = (max(all_ends) - min(all_starts)) if all_starts else 300
+    min_gap_seconds = max(8.0, source_span * min_time_gap_fraction)
+
+    def _word_set(text: str) -> set[str]:
+        return set(re.findall(r"[a-zA-Z0-9']+", text.lower()))
+
+    kept: list[TranscriptSegment] = []
+    kept_word_sets: list[set[str]] = []
+
+    for segment in segments:
+        try:
+            seg_start = _parse_transcript_timestamp_seconds(segment.start_time)
+            seg_end = _parse_transcript_timestamp_seconds(segment.end_time)
+        except ValueError:
+            kept.append(segment)
+            kept_word_sets.append(_word_set(segment.text))
+            continue
+
+        seg_words = _word_set(segment.text)
+        if not seg_words:
+            kept.append(segment)
+            kept_word_sets.append(seg_words)
+            continue
+
+        too_close = False
+        for k_idx, (k_seg, k_words) in enumerate(zip(kept, kept_word_sets)):
+            try:
+                k_start = _parse_transcript_timestamp_seconds(k_seg.start_time)
+                k_end = _parse_transcript_timestamp_seconds(k_seg.end_time)
+            except ValueError:
+                continue
+
+            # Time proximity check: overlapping or too close
+            gap = max(0.0, max(k_start, seg_start) - min(k_end, seg_end))
+            if gap < min_gap_seconds and abs(seg_start - k_start) < min_gap_seconds * 3:
+                too_close = True
+                logger.info(
+                    "Diversity: dropping '%s' (too close in time to '%s')",
+                    segment.text[:60],
+                    k_seg.text[:60],
+                )
+                break
+
+            # Text similarity check (Jaccard)
+            if k_words:
+                intersection = len(seg_words & k_words)
+                union = len(seg_words | k_words)
+                jaccard = intersection / union if union > 0 else 0.0
+                if jaccard > min_text_jaccard:
+                    too_close = True
+                    logger.info(
+                        "Diversity: dropping '%s' (%.0f%% word overlap with '%s')",
+                        segment.text[:60],
+                        jaccard * 100,
+                        k_seg.text[:60],
+                    )
+                    break
+
+        if not too_close:
+            kept.append(segment)
+            kept_word_sets.append(seg_words)
+
+    dropped = len(segments) - len(kept)
+    if dropped:
+        logger.info("Diversity filter dropped %d near-duplicate segment(s).", dropped)
+    return kept
 
 
 async def get_most_relevant_parts_by_transcript(
@@ -786,16 +958,20 @@ async def get_most_relevant_parts_by_transcript(
             reverse=True,
         )
 
+        # Apply diversity filter to avoid near-duplicate clips from the same
+        # part of the video or covering the same topic.
+        diverse_segments = _filter_segment_diversity(validated_segments)
+
         final_analysis = TranscriptAnalysis(
-            most_relevant_segments=validated_segments,
+            most_relevant_segments=diverse_segments,
             summary=analysis.summary,
             key_topics=analysis.key_topics,
             broll_opportunities=analysis.broll_opportunities if include_broll else None,
         )
 
-        logger.info(f"Selected {len(validated_segments)} segments for processing")
-        if validated_segments:
-            top = validated_segments[0]
+        logger.info(f"Selected {len(diverse_segments)} segments for processing (diversity-filtered)")
+        if diverse_segments:
+            top = diverse_segments[0]
             logger.info(
                 f"Top segment - relevance: {top.relevance_score:.2f}, virality: {top.virality.total_score if top.virality else 'N/A'}"
             )

@@ -216,6 +216,61 @@ async def download_broll_video(
         return False
 
 
+async def _fetch_single_broll(
+    opp: Dict[str, Any],
+    index: int,
+    broll_dir: Path,
+    orientation: str,
+    semaphore: asyncio.Semaphore,
+) -> Optional[BRollSuggestion]:
+    """Fetch and download a single B-roll video for one opportunity."""
+    keyword = opp.get("search_term", "")
+    if not keyword:
+        return None
+
+    # Parse timestamp (MM:SS format)
+    timestamp_str = opp.get("timestamp", "00:00")
+    try:
+        parts = timestamp_str.split(":")
+        timestamp = int(parts[0]) * 60 + int(parts[1])
+    except (ValueError, IndexError):
+        timestamp = 0
+
+    duration = opp.get("duration", 3.0)
+    context = opp.get("context", "")
+
+    async with semaphore:
+        video = await get_best_broll_video(
+            keyword, target_duration=duration, orientation=orientation
+        )
+
+    if not video:
+        return None
+
+    video_id = video.get("id")
+    download_url = get_video_download_url(video, quality="hd", orientation=orientation)
+
+    if not download_url:
+        return None
+
+    local_path = broll_dir / f"broll_{index}_{video_id}.mp4"
+    success = await download_broll_video(download_url, local_path)
+
+    if not success:
+        return None
+
+    logger.info(f"B-roll {index}: '{keyword}' -> {local_path}")
+    return BRollSuggestion(
+        keyword=keyword,
+        timestamp=float(timestamp),
+        duration=duration,
+        context=context,
+        video_url=download_url,
+        video_id=video_id,
+        local_path=str(local_path),
+    )
+
+
 async def fetch_broll_for_opportunities(
     opportunities: List[Dict[str, Any]],
     output_dir: Path,
@@ -224,13 +279,8 @@ async def fetch_broll_for_opportunities(
     """
     Fetch B-roll videos for a list of opportunities from AI analysis.
 
-    Args:
-        opportunities: List of B-roll opportunities from AI
-        output_dir: Directory to save downloaded videos
-        orientation: Video orientation
-
-    Returns:
-        List of B-roll suggestions with download paths
+    Downloads run in parallel with a concurrency cap to respect Pexels
+    rate limits while being much faster than sequential requests.
     """
     if not get_config().pexels_api_key:
         logger.warning("Pexels API key not configured, skipping B-roll fetch")
@@ -239,51 +289,15 @@ async def fetch_broll_for_opportunities(
     broll_dir = output_dir / "broll"
     broll_dir.mkdir(parents=True, exist_ok=True)
 
-    suggestions = []
+    # Cap at 3 concurrent Pexels requests to avoid rate-limit errors.
+    semaphore = asyncio.Semaphore(3)
 
-    for i, opp in enumerate(opportunities):
-        keyword = opp.get("search_term", "")
-        if not keyword:
-            continue
-
-        # Parse timestamp (MM:SS format)
-        timestamp_str = opp.get("timestamp", "00:00")
-        try:
-            parts = timestamp_str.split(":")
-            timestamp = int(parts[0]) * 60 + int(parts[1])
-        except (ValueError, IndexError):
-            timestamp = 0
-
-        duration = opp.get("duration", 3.0)
-        context = opp.get("context", "")
-
-        # Search for B-roll
-        video = await get_best_broll_video(keyword, target_duration=duration, orientation=orientation)
-
-        if video:
-            video_id = video.get("id")
-            download_url = get_video_download_url(video, quality="hd", orientation=orientation)
-
-            if download_url:
-                # Download the video
-                local_path = broll_dir / f"broll_{i+1}_{video_id}.mp4"
-                success = await download_broll_video(download_url, local_path)
-
-                if success:
-                    suggestion = BRollSuggestion(
-                        keyword=keyword,
-                        timestamp=float(timestamp),
-                        duration=duration,
-                        context=context,
-                        video_url=download_url,
-                        video_id=video_id,
-                        local_path=str(local_path)
-                    )
-                    suggestions.append(suggestion)
-                    logger.info(f"B-roll {i+1}: '{keyword}' -> {local_path}")
-
-        # Small delay to avoid rate limiting
-        await asyncio.sleep(0.5)
+    tasks = [
+        _fetch_single_broll(opp, i + 1, broll_dir, orientation, semaphore)
+        for i, opp in enumerate(opportunities)
+    ]
+    results = await asyncio.gather(*tasks)
+    suggestions = [s for s in results if s is not None]
 
     logger.info(f"Fetched {len(suggestions)}/{len(opportunities)} B-roll videos")
     return suggestions

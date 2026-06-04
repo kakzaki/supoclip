@@ -1256,6 +1256,56 @@ def extend_keep_ranges_to_sentence_boundary(
     return [*normalized[:-1], (last_start, extended_end)]
 
 
+def _chunk_words_by_phrasing(
+    words: List[Dict[str, Any]],
+    max_words: int = 5,
+    min_words: int = 2,
+) -> List[List[Dict[str, Any]]]:
+    """Group words into readable subtitle chunks using natural phrase boundaries.
+
+    Breaks at sentence-ending punctuation (.!?) and clause boundaries (,;:—)
+    instead of using a fixed word count. This produces much more natural
+    reading rhythm compared to the old fixed-size approach.
+    """
+    SENTENCE_END = {".", "!", "?"}
+    CLAUSE_BREAK = {",", ";", ":", "—", "-"}
+
+    chunks: List[List[Dict[str, Any]]] = []
+    current: List[Dict[str, Any]] = []
+
+    for word in words:
+        current.append(word)
+        text = word.get("text", "").strip()
+        last_char = text[-1] if text else ""
+
+        if last_char in SENTENCE_END:
+            # Always break at sentence end — this is the strongest signal.
+            if len(current) >= min_words:
+                chunks.append(current)
+                current = []
+            # If too short (single word), keep accumulating — probably a fragment.
+
+        elif last_char in CLAUSE_BREAK and len(current) >= min_words:
+            # Clause boundary with enough context: safe to break.
+            chunks.append(current)
+            current = []
+
+        elif len(current) >= max_words:
+            # Hard cap: never exceed max_words to keep on-screen text readable.
+            chunks.append(current)
+            current = []
+
+    # Flush remaining words.
+    if current:
+        if chunks and len(current) < min_words:
+            # Merge short trailing fragment into previous chunk.
+            chunks[-1].extend(current)
+        else:
+            chunks.append(current)
+
+    return chunks
+
+
 def build_assemblyai_ass_subtitles(
     video_path: Path,
     clip_start: float,
@@ -1269,7 +1319,12 @@ def build_assemblyai_ass_subtitles(
     caption_template: str = "default",
     keep_ranges: Optional[List[Tuple[float, float]]] = None,
 ) -> bool:
-    """Generate ASS subtitles from cached AssemblyAI word timings."""
+    """Generate ASS subtitles from cached AssemblyAI word timings.
+
+    Words are grouped into on-screen phrases using natural punctuation
+    boundaries (sentence ends, clause breaks) instead of a fixed word
+    count, producing subtitles that match the speaker's actual phrasing.
+    """
     transcript_data = load_cached_transcript_data(video_path)
     if not transcript_data or not transcript_data.get("words"):
         logger.warning("No cached transcript data available for ASS subtitles")
@@ -1289,9 +1344,24 @@ def build_assemblyai_ass_subtitles(
         logger.warning("No words found in clip timerange for ASS subtitles")
         return False
 
-    chunk_size = 4 if animation in {"fade", "none"} else 3
+    # Choose max-words per chunk based on the template — minimal style uses
+    # more words per line for a cleaner look, while karaoke needs shorter
+    # chunks so the highlight-animation feels responsive.
     if caption_template == "minimal":
-        chunk_size = 6
+        max_words_per_chunk = 7
+    elif animation in {"karaoke", "pop", "bounce"}:
+        max_words_per_chunk = 5
+    else:
+        max_words_per_chunk = 5
+
+    # Group words into natural-phrase chunks.
+    chunks = _chunk_words_by_phrasing(
+        relevant_words,
+        max_words=max_words_per_chunk,
+        min_words=2,
+    )
+    if not chunks:
+        return False
 
     primary = hex_to_ass_color(effective_font_color)
     highlight = hex_to_ass_color(template.get("highlight_color"), "#FFD700")
@@ -1322,8 +1392,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
     events: List[str] = []
     base_prefix = f"{{\\pos({video_width // 2},{y_pos})}}"
-    for chunk_start in range(0, len(relevant_words), chunk_size):
-        chunk = relevant_words[chunk_start : chunk_start + chunk_size]
+    for chunk in chunks:
         chunk_end = chunk[-1]["end"]
         chunk_text = " ".join(escape_ass_text(word["text"]) for word in chunk)
 
@@ -1362,7 +1431,12 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             )
 
     output_ass_path.write_text(header + "\n".join(events) + "\n", encoding="utf-8")
-    logger.info("Wrote ASS subtitles: %s (%d events)", output_ass_path, len(events))
+    logger.info(
+        "Wrote ASS subtitles: %s (%d events from %d phrase-chunks)",
+        output_ass_path,
+        len(events),
+        len(chunks),
+    )
     return True
 
 
@@ -2331,6 +2405,114 @@ def create_optimized_clip(
         return False
 
 
+def _render_single_clip(
+    video_path: Path,
+    segment: Dict[str, Any],
+    clip_index: int,
+    output_dir: Path,
+    font_family: str,
+    font_size: int,
+    font_color: str,
+    caption_template: str,
+    output_format: str,
+    add_subtitles: bool,
+    cleanup_settings: Optional[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    """Render a single clip — safe to call from any thread."""
+    try:
+        logger.info(
+            f"Processing segment {clip_index}: start='{segment.get('start_time')}', end='{segment.get('end_time')}'"
+        )
+
+        provided_keep_ranges = normalize_source_ranges(segment.get("keep_ranges"))
+        provided_source_ranges = normalize_source_ranges(segment.get("source_ranges"))
+        if provided_keep_ranges:
+            start_seconds = provided_keep_ranges[0][0]
+            end_seconds = provided_keep_ranges[-1][1]
+        elif provided_source_ranges:
+            start_seconds = provided_source_ranges[0][0]
+            end_seconds = provided_source_ranges[-1][1]
+        else:
+            start_seconds = parse_timestamp_to_seconds(segment["start_time"])
+            end_seconds = parse_timestamp_to_seconds(segment["end_time"])
+
+        duration = end_seconds - start_seconds
+        logger.info(
+            f"Segment {clip_index} duration: {duration:.1f}s (start: {start_seconds}s, end: {end_seconds}s)"
+        )
+
+        if duration <= 0:
+            logger.warning(
+                f"Skipping clip {clip_index}: invalid duration {duration:.1f}s"
+            )
+            return None
+
+        clip_filename = (
+            f"clip_{clip_index}_{segment['start_time'].replace(':', '')}-"
+            f"{segment['end_time'].replace(':', '')}_{uuid.uuid4().hex[:12]}.mp4"
+        )
+        clip_path = output_dir / clip_filename
+
+        if provided_keep_ranges:
+            keep_ranges = provided_keep_ranges
+        elif provided_source_ranges:
+            keep_ranges = build_keep_ranges_from_source_ranges(
+                video_path,
+                provided_source_ranges,
+                cleanup_settings,
+            )
+        else:
+            keep_ranges = build_clip_keep_ranges(
+                video_path, start_seconds, end_seconds, cleanup_settings
+            )
+        keep_ranges = extend_keep_ranges_to_sentence_boundary(video_path, keep_ranges)
+
+        success = create_optimized_clip(
+            video_path,
+            start_seconds,
+            end_seconds,
+            clip_path,
+            add_subtitles,
+            font_family,
+            font_size,
+            font_color,
+            caption_template,
+            output_format,
+            keep_ranges,
+        )
+
+        if not success:
+            logger.error(f"Failed to create clip {clip_index}")
+            return None
+
+        save_clip_source_ranges(clip_path, keep_ranges)
+        cleaned_duration = sum(end - start for start, end in keep_ranges)
+        clip_info = {
+            "clip_id": clip_index,
+            "filename": clip_filename,
+            "path": str(clip_path),
+            "start_time": segment["start_time"],
+            "end_time": segment["end_time"],
+            "duration": cleaned_duration,
+            "text": segment["text"],
+            "relevance_score": segment["relevance_score"],
+            "reasoning": segment["reasoning"],
+            "virality_score": segment.get("virality_score", 0),
+            "hook_score": segment.get("hook_score", 0),
+            "engagement_score": segment.get("engagement_score", 0),
+            "value_score": segment.get("value_score", 0),
+            "shareability_score": segment.get("shareability_score", 0),
+            "hook_type": segment.get("hook_type"),
+            "keep_ranges": keep_ranges,
+        }
+        logger.info(f"Created clip {clip_index}: {cleaned_duration:.1f}s")
+        return clip_info
+
+    except Exception as e:
+        logger.error(f"Error processing clip {clip_index}: {e}")
+        return None
+
+
 def create_clips_from_segments(
     video_path: Path,
     segments: List[Dict[str, Any]],
@@ -2343,108 +2525,48 @@ def create_clips_from_segments(
     add_subtitles: bool = True,
     cleanup_settings: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
-    """Create optimized video clips from segments with template support."""
+    """Create optimized video clips from segments with template support.
+
+    Clips are rendered in parallel using a thread pool. Each clip's ffmpeg
+    subprocess releases the GIL, so threads give true concurrency here.
+    """
     logger.info(
         f"Creating {len(segments)} clips subtitles={add_subtitles} template '{caption_template}'"
     )
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    clips_info = []
 
-    for i, segment in enumerate(segments):
-        try:
-            # Debug log the segment data
-            logger.info(
-                f"Processing segment {i + 1}: start='{segment.get('start_time')}', end='{segment.get('end_time')}'"
-            )
+    # Cap concurrency: ffmpeg is heavy; 3-4 parallel encodes is a good
+    # balance between throughput and not starving the host of CPU/memory.
+    max_workers = max(1, min(len(segments), 4))
+    clips_info: List[Dict[str, Any]] = []
 
-            provided_keep_ranges = normalize_source_ranges(segment.get("keep_ranges"))
-            provided_source_ranges = normalize_source_ranges(segment.get("source_ranges"))
-            if provided_keep_ranges:
-                start_seconds = provided_keep_ranges[0][0]
-                end_seconds = provided_keep_ranges[-1][1]
-            elif provided_source_ranges:
-                start_seconds = provided_source_ranges[0][0]
-                end_seconds = provided_source_ranges[-1][1]
-            else:
-                start_seconds = parse_timestamp_to_seconds(segment["start_time"])
-                end_seconds = parse_timestamp_to_seconds(segment["end_time"])
-
-            duration = end_seconds - start_seconds
-            logger.info(
-                f"Segment {i + 1} duration: {duration:.1f}s (start: {start_seconds}s, end: {end_seconds}s)"
-            )
-
-            if duration <= 0:
-                logger.warning(
-                    f"Skipping clip {i + 1}: invalid duration {duration:.1f}s (start: {start_seconds}s, end: {end_seconds}s)"
-                )
-                continue
-
-            clip_filename = (
-                f"clip_{i + 1}_{segment['start_time'].replace(':', '')}-"
-                f"{segment['end_time'].replace(':', '')}_{uuid.uuid4().hex[:12]}.mp4"
-            )
-            clip_path = output_dir / clip_filename
-
-            if provided_keep_ranges:
-                keep_ranges = provided_keep_ranges
-            elif provided_source_ranges:
-                keep_ranges = build_keep_ranges_from_source_ranges(
-                    video_path,
-                    provided_source_ranges,
-                    cleanup_settings,
-                )
-            else:
-                keep_ranges = build_clip_keep_ranges(
-                    video_path, start_seconds, end_seconds, cleanup_settings
-                )
-            keep_ranges = extend_keep_ranges_to_sentence_boundary(video_path, keep_ranges)
-
-            success = create_optimized_clip(
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {
+            executor.submit(
+                _render_single_clip,
                 video_path,
-                start_seconds,
-                end_seconds,
-                clip_path,
-                add_subtitles,
+                segment,
+                i + 1,
+                output_dir,
                 font_family,
                 font_size,
                 font_color,
                 caption_template,
                 output_format,
-                keep_ranges,
-            )
+                add_subtitles,
+                cleanup_settings,
+            ): i + 1
+            for i, segment in enumerate(segments)
+        }
 
-            if success:
-                save_clip_source_ranges(clip_path, keep_ranges)
-                cleaned_duration = sum(end - start for start, end in keep_ranges)
-                clip_info = {
-                    "clip_id": i + 1,
-                    "filename": clip_filename,
-                    "path": str(clip_path),
-                    "start_time": segment["start_time"],
-                    "end_time": segment["end_time"],
-                    "duration": cleaned_duration,
-                    "text": segment["text"],
-                    "relevance_score": segment["relevance_score"],
-                    "reasoning": segment["reasoning"],
-                    # Include virality data if available
-                    "virality_score": segment.get("virality_score", 0),
-                    "hook_score": segment.get("hook_score", 0),
-                    "engagement_score": segment.get("engagement_score", 0),
-                    "value_score": segment.get("value_score", 0),
-                    "shareability_score": segment.get("shareability_score", 0),
-                    "hook_type": segment.get("hook_type"),
-                    "keep_ranges": keep_ranges,
-                }
-                clips_info.append(clip_info)
-                logger.info(f"Created clip {i + 1}: {cleaned_duration:.1f}s")
-            else:
-                logger.error(f"Failed to create clip {i + 1}")
+        for future in futures:
+            result = future.result()
+            if result is not None:
+                clips_info.append(result)
 
-        except Exception as e:
-            logger.error(f"Error processing clip {i + 1}: {e}")
-
+    # Restore original ordering (sorted by clip_id)
+    clips_info.sort(key=lambda c: c["clip_id"])
     logger.info(f"Successfully created {len(clips_info)}/{len(segments)} clips")
     return clips_info
 
