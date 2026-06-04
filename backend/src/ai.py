@@ -126,6 +126,45 @@ class ViralityAnalysis(BaseModel):
         default="The model did not provide a detailed virality breakdown.",
         description="Explanation of the virality score",
     )
+    # ── Qualitative insights (new) ─────────────────────────────────
+    best_platform: Optional[str] = Field(
+        default=None,
+        description=(
+            "Recommended platform for this clip: 'TikTok', 'YouTube Shorts', "
+            "'Instagram Reels', or 'All platforms'"
+        ),
+    )
+    target_audience: Optional[str] = Field(
+        default=None,
+        description=(
+            "Who this clip would resonate with (e.g. 'Aspiring entrepreneurs', "
+            "'Gen Z travelers', 'Busy parents'). 1-2 sentences max."
+        ),
+    )
+    suggested_title: Optional[str] = Field(
+        default=None,
+        description=(
+            "A clickable, curiosity-driven title for this clip (max 80 chars). "
+            "Should feel native to the recommended platform."
+        ),
+    )
+    suggested_caption: Optional[str] = Field(
+        default=None,
+        description=(
+            "A ready-to-post social media caption for this clip. "
+            "Include a compelling 1-2 sentence description, 3-5 relevant emojis, "
+            "and 3-5 hashtags (e.g. '#motivation #entrepreneurship'). "
+            "Keep it under 250 chars. Should feel native and not overly salesy."
+        ),
+    )
+    weakness_flag: Optional[str] = Field(
+        default=None,
+        description=(
+            "What might hold this clip back (e.g. 'Hook takes 3 seconds too long', "
+            "'Punchline is buried mid-clip', 'Needs more visual variety'). "
+            "If none, say 'No major weakness'."
+        ),
+    )
 
 
 def _default_virality_analysis() -> ViralityAnalysis:
@@ -260,7 +299,7 @@ OUTPUT CONTRACT:
 - Only include "broll_opportunities" when B-roll was requested.
 - Each item in "most_relevant_segments" must include: "start_time", "end_time", "text", "relevance_score", "reasoning", and "virality".
 - Do not use "segment" as an output field. Use "text".
-- "virality" must include: "hook_score", "engagement_score", "value_score", "shareability_score", "total_score", "hook_type", and "virality_reasoning".
+- "virality" must include: "hook_score", "engagement_score", "value_score", "shareability_score", "total_score", "hook_type", "virality_reasoning", "best_platform", "target_audience", "suggested_title", "suggested_caption", and "weakness_flag".
 - Every returned segment must be {dc.min_seconds}-{dc.max_seconds} seconds long. Prefer {dc.ideal_min}-{dc.ideal_max} seconds.
 
 CORE OBJECTIVES:
@@ -336,6 +375,28 @@ HOOK TYPES to identify:
 - "story": Starts with narrative/anecdote
 - "contrast": Before/after or problem/solution framing
 - "none": No clear hook pattern
+
+QUALITATIVE INSIGHTS (provide for every segment):
+1. best_platform: Which platform this clip is best suited for.
+   - "TikTok" — fast-paced, leans toward entertainment/fun, under 30s ideal
+   - "YouTube Shorts" — informational/educational punch, works well 30-50s
+   - "Instagram Reels" — polished, aesthetic, lifestyle-focused
+   - "All platforms" — universal appeal, works everywhere
+2. target_audience: Who this clip would resonate with (1-2 sentences).
+   Be specific rather than generic (e.g. "Freelance designers struggling with pricing" not "People interested in design").
+3. suggested_title: A clickable, curiosity-driven title for this clip (max 80 chars).
+   Make it native to the recommended platform. Examples:
+   - "The pricing mistake 90% of freelancers make 💸"
+   - "I tried waking up at 4am for 30 days. Here's what happened"
+4. suggested_caption: A ready-to-post social media caption. Include:
+   - 1-2 sentence compelling description that teases the content
+   - 3-5 relevant emojis scattered naturally
+   - 3-5 hashtags at the end (e.g. "#motivation #entrepreneurship")
+   Keep it under 250 chars, natural tone, not salesy. Example:
+   "This shift changed everything for me 💡 Stop trading time for money and start building systems that work while you sleep. 🚀 #passiveincome #businesstips #entrepreneur"
+5. weakness_flag: What might hold this clip back. Be honest and specific.
+   - Examples: "Hook takes 3 seconds too long to get to the point", "Payoff is expected/cliché", "Middle section loses momentum", "Needs visual variety — 20 seconds of talking head"
+   - If the clip is solid across all dimensions, say "No major weakness".
 
 B-ROLL OPPORTUNITIES:
 Identify 2-4 moments in each segment where B-roll footage could enhance the video:
@@ -548,7 +609,7 @@ JSON-only output requirements:
 - No Markdown, headings, bullets, code fences, or explanatory text outside JSON.
 - Top-level keys: "most_relevant_segments", "summary", "key_topics"{', "broll_opportunities"' if include_broll else ''}.
 - Segment keys: "start_time", "end_time", "text", "relevance_score", "reasoning", "virality".
-- Virality keys: "hook_score", "engagement_score", "value_score", "shareability_score", "total_score", "hook_type", "virality_reasoning".
+- Virality keys: "hook_score", "engagement_score", "value_score", "shareability_score", "total_score", "hook_type", "virality_reasoning", "best_platform", "target_audience", "suggested_title", "weakness_flag".
 - Do not return segments shorter than {dc.min_seconds} seconds or longer than {dc.max_seconds} seconds.
 
 Transcript:

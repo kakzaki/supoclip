@@ -32,6 +32,11 @@ class ClipRepository:
         value_score: int = 0,
         shareability_score: int = 0,
         hook_type: Optional[str] = None,
+        best_platform: Optional[str] = None,
+        target_audience: Optional[str] = None,
+        suggested_title: Optional[str] = None,
+        suggested_caption: Optional[str] = None,
+        weakness_flag: Optional[str] = None,
     ) -> str:
         """Create a new clip record and return its ID."""
         try:
@@ -41,11 +46,13 @@ class ClipRepository:
                     (task_id, filename, file_path, start_time, end_time, duration,
                      text, relevance_score, reasoning, clip_order,
                      virality_score, hook_score, engagement_score, value_score, shareability_score, hook_type,
+                     best_platform, target_audience, suggested_title, suggested_caption, weakness_flag,
                      created_at)
                     VALUES
                     (:task_id, :filename, :file_path, :start_time, :end_time, :duration,
                      :text, :relevance_score, :reasoning, :clip_order,
                      :virality_score, :hook_score, :engagement_score, :value_score, :shareability_score, :hook_type,
+                     :best_platform, :target_audience, :suggested_title, :suggested_caption, :weakness_flag,
                      NOW())
                     RETURNING id
                 """),
@@ -66,6 +73,11 @@ class ClipRepository:
                     "value_score": value_score,
                     "shareability_score": shareability_score,
                     "hook_type": hook_type,
+                    "best_platform": best_platform,
+                    "target_audience": target_audience,
+                    "suggested_title": suggested_title,
+                    "suggested_caption": suggested_caption,
+                    "weakness_flag": weakness_flag,
                 },
             )
         except Exception:
@@ -107,7 +119,8 @@ class ClipRepository:
                 sa_text("""
                     SELECT id, filename, file_path, start_time, end_time, duration,
                            text, relevance_score, reasoning, clip_order, created_at,
-                           virality_score, hook_score, engagement_score, value_score, shareability_score, hook_type
+                           virality_score, hook_score, engagement_score, value_score, shareability_score, hook_type,
+                           best_platform, target_audience, suggested_title, suggested_caption, weakness_flag
                     FROM generated_clips
                     WHERE task_id = :task_id
                     ORDER BY clip_order ASC
@@ -119,7 +132,8 @@ class ClipRepository:
             result = await db.execute(
                 sa_text("""
                     SELECT id, filename, file_path, start_time, end_time, duration,
-                           text, relevance_score, reasoning, clip_order, created_at
+                           text, relevance_score, reasoning, clip_order, created_at,
+                           virality_score, hook_score, engagement_score, value_score, shareability_score, hook_type
                     FROM generated_clips
                     WHERE task_id = :task_id
                     ORDER BY clip_order ASC
@@ -149,6 +163,11 @@ class ClipRepository:
                     "value_score": row.value_score or 0,
                     "shareability_score": row.shareability_score or 0,
                     "hook_type": row.hook_type,
+                    "best_platform": getattr(row, "best_platform", None),
+                    "target_audience": getattr(row, "target_audience", None),
+                    "suggested_title": getattr(row, "suggested_title", None),
+                    "suggested_caption": getattr(row, "suggested_caption", None),
+                    "weakness_flag": getattr(row, "weakness_flag", None),
                 }
             )
 
@@ -199,6 +218,7 @@ class ClipRepository:
                     SELECT id, task_id, filename, file_path, start_time, end_time, duration,
                            text, relevance_score, reasoning, clip_order,
                            virality_score, hook_score, engagement_score, value_score, shareability_score, hook_type,
+                           best_platform, target_audience, suggested_title, suggested_caption, weakness_flag,
                            created_at
                     FROM generated_clips
                     WHERE id = :clip_id
@@ -212,7 +232,9 @@ class ClipRepository:
                 sa_text(
                     """
                     SELECT id, task_id, filename, file_path, start_time, end_time, duration,
-                           text, relevance_score, reasoning, clip_order, created_at
+                           text, relevance_score, reasoning, clip_order,
+                           virality_score, hook_score, engagement_score, value_score, shareability_score, hook_type,
+                           created_at
                     FROM generated_clips
                     WHERE id = :clip_id
                     """
@@ -241,6 +263,10 @@ class ClipRepository:
             "value_score": row.value_score or 0,
             "shareability_score": row.shareability_score or 0,
             "hook_type": row.hook_type,
+            "best_platform": getattr(row, "best_platform", None),
+            "target_audience": getattr(row, "target_audience", None),
+            "suggested_title": getattr(row, "suggested_title", None),
+            "weakness_flag": getattr(row, "weakness_flag", None),
             "created_at": row.created_at.isoformat(),
             "video_url": f"/tasks/{row.task_id}/clips/{row.id}/file",
         }

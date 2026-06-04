@@ -306,6 +306,11 @@ class VideoService:
                 "value_score": segment.get("value_score", 0),
                 "shareability_score": segment.get("shareability_score", 0),
                 "hook_type": segment.get("hook_type"),
+                "best_platform": segment.get("best_platform"),
+                "target_audience": segment.get("target_audience"),
+                "suggested_title": segment.get("suggested_title"),
+                "suggested_caption": segment.get("suggested_caption"),
+                "weakness_flag": segment.get("weakness_flag"),
                 "keep_ranges": keep_ranges,
             }
         except Exception as e:
@@ -513,6 +518,11 @@ class VideoService:
                             "value_score": virality.get("value_score", 0),
                             "shareability_score": virality.get("shareability_score", 0),
                             "hook_type": virality.get("hook_type"),
+                            "best_platform": virality.get("best_platform"),
+                            "target_audience": virality.get("target_audience"),
+                            "suggested_title": virality.get("suggested_title"),
+                            "suggested_caption": virality.get("suggested_caption"),
+                            "weakness_flag": virality.get("weakness_flag"),
                         }
                     )
                 else:
@@ -530,6 +540,11 @@ class VideoService:
                             "value_score": virality.get("value_score", 0),
                             "shareability_score": virality.get("shareability_score", 0),
                             "hook_type": virality.get("hook_type"),
+                            "best_platform": virality.get("best_platform"),
+                            "target_audience": virality.get("target_audience"),
+                            "suggested_title": virality.get("suggested_title"),
+                            "suggested_caption": virality.get("suggested_caption"),
+                            "weakness_flag": virality.get("weakness_flag"),
                         }
                     )
 

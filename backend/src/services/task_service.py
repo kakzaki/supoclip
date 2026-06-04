@@ -313,6 +313,11 @@ class TaskService:
                     value_score=clip_info.get("value_score", 0),
                     shareability_score=clip_info.get("shareability_score", 0),
                     hook_type=clip_info.get("hook_type"),
+                    best_platform=clip_info.get("best_platform"),
+                    target_audience=clip_info.get("target_audience"),
+                    suggested_title=clip_info.get("suggested_title"),
+                    suggested_caption=clip_info.get("suggested_caption"),
+                    weakness_flag=clip_info.get("weakness_flag"),
                 )
                 await self.db.commit()
                 clip_ids.append(clip_id)
@@ -636,6 +641,11 @@ class TaskService:
                     "value_score": clip.get("value_score", 0),
                     "shareability_score": clip.get("shareability_score", 0),
                     "hook_type": clip.get("hook_type"),
+                    "best_platform": clip.get("best_platform"),
+                    "target_audience": clip.get("target_audience"),
+                    "suggested_title": clip.get("suggested_title"),
+                    "suggested_caption": clip.get("suggested_caption"),
+                    "weakness_flag": clip.get("weakness_flag"),
                 }
             )
 
@@ -674,6 +684,10 @@ class TaskService:
                 value_score=clip_info.get("value_score", 0),
                 shareability_score=clip_info.get("shareability_score", 0),
                 hook_type=clip_info.get("hook_type"),
+                best_platform=clip_info.get("best_platform"),
+                target_audience=clip_info.get("target_audience"),
+                suggested_title=clip_info.get("suggested_title"),
+                weakness_flag=clip_info.get("weakness_flag"),
             )
             clip_ids.append(clip_id)
 
@@ -777,6 +791,11 @@ class TaskService:
             value_score=clip.get("value_score", 0),
             shareability_score=clip.get("shareability_score", 0),
             hook_type=clip.get("hook_type"),
+            best_platform=clip.get("best_platform"),
+            target_audience=clip.get("target_audience"),
+            suggested_title=clip.get("suggested_title"),
+            suggested_caption=clip.get("suggested_caption"),
+            weakness_flag=clip.get("weakness_flag"),
         )
 
         await self.clip_repo.reorder_task_clips(self.db, task_id)

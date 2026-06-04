@@ -54,6 +54,9 @@ import {
   Type,
   Clapperboard,
   Loader2,
+  Sparkles,
+  Monitor,
+  Users,
 } from "lucide-react";
 import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from "@/components/ui/tooltip";
 import { Progress } from "@/components/ui/progress";
@@ -80,6 +83,12 @@ interface Clip {
   value_score: number;
   shareability_score: number;
   hook_type: string | null;
+  // Qualitative insights
+  best_platform: string | null;
+  target_audience: string | null;
+  suggested_title: string | null;
+  suggested_caption: string | null;
+  weakness_flag: string | null;
 }
 
 interface TaskDetails {
@@ -1323,6 +1332,72 @@ export default function TaskPage() {
                               </Badge>
                             </div>
                           )}
+                        </div>
+                      )}
+
+                      {/* Qualitative Insights */}
+                      {(clip.best_platform || clip.target_audience || clip.suggested_title || clip.suggested_caption || clip.weakness_flag) && (
+                        <div className="mb-4 p-3 bg-gradient-to-r from-amber-50 to-orange-50 rounded-lg border border-amber-200">
+                          <h4 className="font-medium text-amber-900 text-sm mb-3 flex items-center gap-2">
+                            <Sparkles className="w-4 h-4" />
+                            AI Insights
+                          </h4>
+                          <div className="space-y-2.5 text-xs">
+                            {clip.best_platform && (
+                              <div className="flex items-start gap-2">
+                                <Monitor className="w-3.5 h-3.5 text-amber-600 mt-0.5 shrink-0" />
+                                <div>
+                                  <span className="font-medium text-amber-800">Best platform:</span>{" "}
+                                  <span className="text-stone-700">{clip.best_platform}</span>
+                                </div>
+                              </div>
+                            )}
+                            {clip.target_audience && (
+                              <div className="flex items-start gap-2">
+                                <Users className="w-3.5 h-3.5 text-amber-600 mt-0.5 shrink-0" />
+                                <div>
+                                  <span className="font-medium text-amber-800">Target audience:</span>{" "}
+                                  <span className="text-stone-700">{clip.target_audience}</span>
+                                </div>
+                              </div>
+                            )}
+                            {clip.suggested_title && (
+                              <div className="flex items-start gap-2">
+                                <MessageSquare className="w-3.5 h-3.5 text-amber-600 mt-0.5 shrink-0" />
+                                <div>
+                                  <span className="font-medium text-amber-800">Suggested title:</span>{" "}
+                                  <span className="text-stone-700 italic">"{clip.suggested_title}"</span>
+                                </div>
+                              </div>
+                            )}
+                            {clip.suggested_caption && (
+                              <div className="flex items-start gap-2">
+                                <Share2 className="w-3.5 h-3.5 text-amber-600 mt-0.5 shrink-0" />
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center gap-2 mb-0.5">
+                                    <span className="font-medium text-amber-800 text-xs">Caption:</span>
+                                    <button
+                                      type="button"
+                                      onClick={() => navigator.clipboard.writeText(clip.suggested_caption!)}
+                                      className="text-xs text-amber-600 hover:text-amber-800 underline"
+                                    >
+                                      Copy
+                                    </button>
+                                  </div>
+                                  <p className="text-stone-700 leading-relaxed">{clip.suggested_caption}</p>
+                                </div>
+                              </div>
+                            )}
+                            {clip.weakness_flag && (
+                              <div className="flex items-start gap-2">
+                                <AlertCircle className="w-3.5 h-3.5 text-red-500 mt-0.5 shrink-0" />
+                                <div>
+                                  <span className="font-medium text-red-700">Weakness:</span>{" "}
+                                  <span className="text-stone-700">{clip.weakness_flag}</span>
+                                </div>
+                              </div>
+                            )}
+                          </div>
                         </div>
                       )}
 

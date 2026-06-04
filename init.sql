@@ -96,6 +96,13 @@ CREATE TABLE generated_clips (
     shareability_score INTEGER DEFAULT 0,
     hook_type VARCHAR(50),
 
+    -- Qualitative virality insights
+    best_platform VARCHAR(50),
+    target_audience TEXT,
+    suggested_title VARCHAR(100),
+    suggested_caption VARCHAR(300),
+    weakness_flag TEXT,
+
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
