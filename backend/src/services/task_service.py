@@ -206,6 +206,19 @@ class TaskService:
 
             # Process video with progress updates
             pipeline_start = perf_counter()
+
+            # Callback to persist transcript immediately after it's obtained,
+            # so resume can skip the potentially slow transcription step.
+            async def on_transcript_ready(transcript_text: str):
+                await self.cache_repo.upsert_cache(
+                    self.db,
+                    cache_key=cache_key,
+                    source_url=url,
+                    source_type=source_type,
+                    transcript_text=transcript_text,
+                    analysis_json=None,  # not ready yet
+                )
+
             result = await self.video_service.process_video_complete(
                 url=url,
                 source_type=source_type,
@@ -222,6 +235,7 @@ class TaskService:
                 progress_callback=update_progress,
                 should_cancel=should_cancel,
                 clip_duration=clip_duration,
+                transcript_ready_callback=on_transcript_ready,
             )
             stage_timings["pipeline_seconds"] = round(
                 perf_counter() - pipeline_start, 3

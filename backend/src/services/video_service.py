@@ -96,11 +96,16 @@ class VideoService:
 
     @staticmethod
     async def generate_transcript(
-        video_path: Path, processing_mode: str = "balanced"
+        video_path: Path,
+        processing_mode: str = "balanced",
+        progress_callback: Optional[Callable[[int, str, str], Awaitable[None]]] = None,
     ) -> str:
         """
         Generate transcript from video using AssemblyAI.
         Runs in thread pool to avoid blocking.
+
+        progress_callback receives sub-steps during the (potentially long)
+        transcription phase so the UI doesn't appear stuck at 30 %.
         """
         logger.info(f"Generating transcript for: {video_path}")
         speech_model = "best"
@@ -108,6 +113,9 @@ class VideoService:
         if processing_mode == "fast":
             speech_model = runtime_config.fast_mode_transcript_model
 
+        # Report sub-steps so the user sees progress during transcription
+        if progress_callback:
+            await progress_callback(32, "Extracting audio for transcription...", "processing")
         transcript = await run_in_thread(get_video_transcript, video_path, speech_model)
         logger.info(f"Transcript generated: {len(transcript)} characters")
         return transcript
@@ -361,6 +369,7 @@ class VideoService:
         progress_callback: Optional[Callable[[int, str, str], Awaitable[None]]] = None,
         should_cancel: Optional[Callable[[], Awaitable[bool]]] = None,
         clip_duration: Optional[str] = None,
+        transcript_ready_callback: Optional[Callable[[str], Awaitable[None]]] = None,
     ) -> Dict[str, Any]:
         """
         Complete video processing pipeline.
@@ -423,10 +432,16 @@ class VideoService:
             transcript = cached_transcript
             if not transcript:
                 transcript = await VideoService.generate_transcript(
-                    video_path, processing_mode=processing_mode
+                    video_path,
+                    processing_mode=processing_mode,
+                    progress_callback=progress_callback,
                 )
                 if progress_callback:
                     await progress_callback(45, "Transcription complete.", "processing")
+
+                # Persist transcript immediately so resume can skip transcription
+                if transcript_ready_callback:
+                    await transcript_ready_callback(transcript)
 
             # Step 3: AI analysis
             if should_cancel and await should_cancel():

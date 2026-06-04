@@ -97,11 +97,35 @@ class VideoProcessor:
         return settings.get(target_quality, settings["high"])
 
 
+def _get_file_duration_seconds(file_path: Path) -> Optional[float]:
+    """Return media duration in seconds via ffprobe, or None on failure."""
+    try:
+        result = subprocess.run(
+            [
+                "ffprobe", "-v", "error",
+                "-show_entries", "format=duration",
+                "-of", "csv=p=0",
+                str(file_path),
+            ],
+            capture_output=True, text=True, check=True, timeout=30,
+        )
+        return float(result.stdout.strip())
+    except Exception:
+        return None
+
+
 def _prepare_audio_for_transcription(video_path: Path) -> Path:
     """Extract a compact audio-only file before uploading to AssemblyAI."""
     audio_path = video_path.with_name(f"{video_path.stem}.assemblyai.mp3")
-    if audio_path.exists() and audio_path.stat().st_size > 0:
+    if audio_path.exists() and audio_path.stat().st_size > 1024:
+        # Reuse existing audio extraction from a previous (possibly failed) run.
+        # Require > 1 KB to avoid reusing a truncated/empty file.
+        logger.info("Reusing existing transcription audio: %s", audio_path)
         return audio_path
+    elif audio_path.exists():
+        # Stale / empty file from a crashed run — remove it so ffmpeg can recreate it.
+        logger.warning("Removing stale transcription audio file: %s", audio_path)
+        audio_path.unlink(missing_ok=True)
 
     command = [
         "ffmpeg",
@@ -345,10 +369,50 @@ def get_video_transcript_with_groq(video_path: Path) -> str:
 
     client = Groq(api_key=runtime_config.groq_api_key)
 
+    # Groq enforces a 25 MB file size limit on transcription uploads.
+    # 64 kbps audio from videos longer than ~53 min will exceed this.
+    # We re-encode at a lower bitrate when the extracted audio is too large.
+    GROQ_MAX_SIZE = 24 * 1024 * 1024  # 24 MB with safety margin
+
     try:
-        # Prepare audio for transcription (Groq has a 25MB limit)
         logger.info("Extracting audio for Groq...")
         audio_path = _prepare_audio_for_transcription(video_path)
+
+        if audio_path.stat().st_size > GROQ_MAX_SIZE:
+            original_mb = audio_path.stat().st_size / (1024 * 1024)
+            logger.warning(
+                "Audio file %.2f MB exceeds Groq's 25 MB limit; re-encoding at lower bitrate...",
+                original_mb,
+            )
+            compressed_path = video_path.with_name(f"{video_path.stem}.groq.mp3")
+
+            # Calculate duration to determine a safe bitrate that fits in 24 MB.
+            duration_s = _get_file_duration_seconds(audio_path)
+            if duration_s is None:
+                duration_s = _get_file_duration_seconds(video_path)
+            if duration_s:
+                # bitrate_bps = (max_size_bytes * 8) / duration_s, with 10 % headroom
+                target_bitrate = int((GROQ_MAX_SIZE * 8 * 0.9) / duration_s)
+                target_bitrate = max(target_bitrate, 16000)  # floor at 16 kbps
+            else:
+                target_bitrate = 32000  # 32 kbps fallback
+
+            command = [
+                "ffmpeg", "-y", "-i", str(audio_path),
+                "-vn", "-ac", "1", "-ar", "16000",
+                "-b:a", str(target_bitrate),
+                str(compressed_path),
+            ]
+            result = subprocess.run(command, capture_output=True, text=True, timeout=300)
+            if result.returncode == 0 and compressed_path.exists() and compressed_path.stat().st_size > 0:
+                audio_path = compressed_path
+                logger.info(
+                    "Re-encoded audio for Groq: %.2f MB (bitrate %.1f kbps)",
+                    audio_path.stat().st_size / (1024 * 1024),
+                    target_bitrate / 1000,
+                )
+            else:
+                logger.warning("Audio re-encoding failed (rc=%s), trying original file", result.returncode)
 
         logger.info(f"Sending audio to Groq (size: {audio_path.stat().st_size / (1024*1024):.2f}MB)...")
         with open(audio_path, "rb") as file:
